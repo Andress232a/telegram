@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor de Telegram - Configuración</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .help-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .code-section {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .password-section {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .step-indicator {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Gestor de Telegram</h1>
+        <p class="subtitle">Configura tu cuenta de Telegram para comenzar</p>
+        
+        <div class="step-indicator" id="stepIndicator">Paso 1: Configuración de API</div>
+        
+        <div class="alert alert-success" id="successAlert"></div>
+        <div class="alert alert-error" id="errorAlert"></div>
+        
+        <form id="configForm">
+            <div class="form-group">
+                <label for="api_id">API ID</label>
+                <input type="text" id="api_id" name="api_id" required 
+                       placeholder="Ej: 12345678">
+                <div class="help-text">
+                    Obtén tu API ID en <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="api_hash">API Hash</label>
+                <input type="text" id="api_hash" name="api_hash" required 
+                       placeholder="Ej: abc123def456...">
+                <div class="help-text">
+                    Obtén tu API Hash en <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="phone">Número de Teléfono</label>
+                <input type="tel" id="phone" name="phone" required 
+                       placeholder="+1234567890" pattern="^\+[1-9]\d{1,14}$">
+                <div class="help-text">
+                    Incluye el código de país (ej: +34612345678)
+                </div>
+            </div>
+            
+            <button type="submit" class="btn" id="configBtn">Configurar y Conectar</button>
+        </form>
+        
+        <div class="code-section" id="codeSection">
+            <div class="form-group">
+                <label for="code">Código de Verificación</label>
+                <input type="text" id="code" name="code" placeholder="12345">
+                <div class="help-text">
+                    Ingresa el código que recibiste en Telegram
+                </div>
+            </div>
+            
+            <button type="button" class="btn" id="verifyBtn">Verificar Código</button>
+        </div>
+        
+        <div class="password-section" id="passwordSection">
+            <div class="form-group">
+                <label for="password">Contraseña 2FA</label>
+                <input type="password" id="password" name="password" placeholder="Tu contraseña">
+                <div class="help-text">
+                    Ingresa tu contraseña de autenticación de dos factores
+                </div>
+            </div>
+            
+            <button type="button" class="btn" id="passwordBtn">Verificar Contraseña</button>
+        </div>
+    </div>
+    
+    <script>
+        let needsPassword = false;
+        
+        document.getElementById('configForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const apiId = document.getElementById('api_id').value;
+            const apiHash = document.getElementById('api_hash').value;
+            const phone = document.getElementById('phone').value;
+            
+            const btn = document.getElementById('configBtn');
+            btn.disabled = true;
+            btn.textContent = 'Configurando...';
+            
+            try {
+                const response = await fetch('/api/configure', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({api_id: apiId, api_hash: apiHash, phone: phone})
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess('Configuración guardada. Conectando...');
+                    await connect();
+                } else {
+                    showError(data.error || 'Error en la configuración');
+                    btn.disabled = false;
+                    btn.textContent = 'Configurar y Conectar';
+                }
+            } catch (error) {
+                showError('Error de conexión: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Configurar y Conectar';
+            }
+        });
+        
+        async function connect() {
+            try {
+                // Agregar timeout de 60 segundos
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 60000);
+                
+                const response = await fetch('/api/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.needs_code) {
+                        document.getElementById('stepIndicator').textContent = 'Paso 2: Verificación';
+                        document.getElementById('codeSection').style.display = 'block';
+                        showSuccess('Código enviado a Telegram. Revisa tu aplicación.');
+                    } else if (data.connected) {
+                        showSuccess('¡Conectado exitosamente!');
+                        setTimeout(() => {
+                            window.location.href = '/home';
+                        }, 1500);
+                    }
+                } else {
+                    showError(data.error || 'Error al conectar');
+                    // Habilitar el botón de nuevo
+                    const btn = document.getElementById('configBtn');
+                    btn.disabled = false;
+                    btn.textContent = 'Configurar y Conectar';
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    showError('Tiempo de espera agotado. Verifica tu conexión a internet e intenta de nuevo.');
+                } else {
+                    showError('Error de conexión: ' + error.message);
+                }
+                // Habilitar el botón de nuevo
+                const btn = document.getElementById('configBtn');
+                btn.disabled = false;
+                btn.textContent = 'Configurar y Conectar';
+            }
+        }
+        
+        document.getElementById('verifyBtn').addEventListener('click', async () => {
+            const code = document.getElementById('code').value;
+            if (!code) {
+                showError('Ingresa el código de verificación');
+                return;
+            }
+            
+            const btn = document.getElementById('verifyBtn');
+            btn.disabled = true;
+            btn.textContent = 'Verificando...';
+            
+            try {
+                const response = await fetch('/api/verify_code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({code: code, password: needsPassword ? document.getElementById('password').value : null})
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.connected) {
+                        showSuccess('¡Autenticado exitosamente!');
+                        setTimeout(() => {
+                            window.location.href = '/home';
+                        }, 1500);
+                    }
+                } else {
+                    if (data.needs_password) {
+                        needsPassword = true;
+                        document.getElementById('passwordSection').style.display = 'block';
+                        document.getElementById('stepIndicator').textContent = 'Paso 3: Contraseña 2FA';
+                        showError('Se requiere contraseña de autenticación de dos factores');
+                    } else {
+                        showError(data.error || 'Error al verificar');
+                    }
+                    btn.disabled = false;
+                    btn.textContent = 'Verificar Código';
+                }
+            } catch (error) {
+                showError('Error: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Verificar Código';
+            }
+        });
+        
+        document.getElementById('passwordBtn').addEventListener('click', async () => {
+            const password = document.getElementById('password').value;
+            if (!password) {
+                showError('Ingresa la contraseña');
+                return;
+            }
+            
+            const code = document.getElementById('code').value;
+            const btn = document.getElementById('passwordBtn');
+            btn.disabled = true;
+            btn.textContent = 'Verificando...';
+            
+            try {
+                const response = await fetch('/api/verify_code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({code: code, password: password})
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.connected) {
+                    showSuccess('¡Autenticado exitosamente!');
+                    setTimeout(() => {
+                        window.location.href = '/home';
+                    }, 1500);
+                } else {
+                    showError(data.error || 'Error al verificar');
+                    btn.disabled = false;
+                    btn.textContent = 'Verificar Contraseña';
+                }
+            } catch (error) {
+                showError('Error: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Verificar Contraseña';
+            }
+        });
+        
+        function showSuccess(message) {
+            const alert = document.getElementById('successAlert');
+            alert.textContent = message;
+            alert.style.display = 'block';
+            document.getElementById('errorAlert').style.display = 'none';
+        }
+        
+        function showError(message) {
+            const alert = document.getElementById('errorAlert');
+            alert.textContent = message;
+            alert.style.display = 'block';
+            document.getElementById('successAlert').style.display = 'none';
+        }
+        
+        // Verificar estado al cargar
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                if (data.connected) {
+                    window.location.href = '/upload';
+                }
+            } catch (error) {
+                // Ignorar errores al verificar estado
+            }
+        });
+    </script>
+</body>
+</html>
+

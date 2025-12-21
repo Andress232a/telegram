@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram - Gestor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #0e1621;
+            color: #e4e6eb;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+        }
+        
+        .sidebar {
+            width: 320px;
+            background: #17212b;
+            border-right: 1px solid #242f3d;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .sidebar-header {
+            padding: 15px 20px;
+            background: #17212b;
+            border-bottom: 1px solid #242f3d;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .sidebar-header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #e4e6eb;
+            flex: 1;
+        }
+        
+        .logout-btn {
+            background: transparent;
+            border: none;
+            color: #8e9297;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 5px 10px;
+            border-radius: 5px;
+            transition: all 0.2s;
+        }
+        
+        .logout-btn:hover {
+            background: #242f3d;
+            color: #e4e6eb;
+        }
+        
+        .search-box {
+            padding: 10px 15px;
+            background: #242f3d;
+            border: none;
+            border-radius: 20px;
+            color: #e4e6eb;
+            font-size: 14px;
+            width: 100%;
+            margin: 10px 15px;
+        }
+        
+        .search-box:focus {
+            outline: none;
+            background: #2b3542;
+        }
+        
+        .folder-tabs {
+            display: flex;
+            padding: 10px;
+            gap: 5px;
+            border-bottom: 1px solid #242f3d;
+            background: #17212b;
+            overflow-x: auto;
+            flex-shrink: 0;
+        }
+        
+        .folder-tab {
+            padding: 8px 16px;
+            background: #242f3d;
+            border: none;
+            border-radius: 20px;
+            color: #8e9297;
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .folder-tab:hover {
+            background: #2b3542;
+            color: #e4e6eb;
+        }
+        
+        .folder-tab.active {
+            background: #2b5278;
+            color: #e4e6eb;
+        }
+        
+        .folder-badge {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin-left: 5px;
+        }
+        
+        .chats-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 5px 0;
+        }
+        
+        .chat-type-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.1);
+            margin-left: 5px;
+        }
+        
+        .chat-type-badge.user {
+            background: rgba(67, 160, 71, 0.3);
+            color: #4caf50;
+        }
+        
+        .chat-type-badge.group {
+            background: rgba(33, 150, 243, 0.3);
+            color: #2196f3;
+        }
+        
+        .chat-type-badge.channel {
+            background: rgba(156, 39, 176, 0.3);
+            color: #9c27b0;
+        }
+        
+        .chat-type-badge.supergroup {
+            background: rgba(255, 152, 0, 0.3);
+            color: #ff9800;
+        }
+        
+        .chat-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: background 0.2s;
+            border-bottom: 1px solid #242f3d;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .chat-item:hover {
+            background: #242f3d;
+        }
+        
+        .chat-item.active {
+            background: #2b5278;
+        }
+        
+        .chat-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 600;
+            color: white;
+            flex-shrink: 0;
+        }
+        
+        .chat-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .chat-name {
+            font-weight: 600;
+            font-size: 15px;
+            color: #e4e6eb;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .chat-preview {
+            font-size: 13px;
+            color: #8e9297;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .chat-time {
+            font-size: 12px;
+            color: #8e9297;
+            margin-left: auto;
+        }
+        
+        .unread-badge {
+            background: #2b5278;
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: auto;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #0e1621;
+        }
+        
+        .chat-header {
+            padding: 15px 20px;
+            background: #17212b;
+            border-bottom: 1px solid #242f3d;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .chat-header-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: 600;
+            color: white;
+        }
+        
+        .chat-header-info h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #e4e6eb;
+        }
+        
+        .messages-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .message {
+            max-width: 70%;
+            padding: 10px 15px;
+            border-radius: 12px;
+            background: #242f3d;
+            color: #e4e6eb;
+            word-wrap: break-word;
+            align-self: flex-start;
+        }
+        
+        .message.own {
+            background: #2b5278;
+            align-self: flex-end;
+        }
+        
+        .message-video {
+            margin-top: 10px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .message-video {
+            position: relative;
+        }
+        
+        .message-video video {
+            width: 100%;
+            max-width: 400px;
+            display: block;
+            cursor: pointer;
+        }
+        
+        .context-menu {
+            position: fixed;
+            background: #242f3d;
+            border: 1px solid #2b3542;
+            border-radius: 8px;
+            padding: 5px 0;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        .context-menu-item {
+            padding: 10px 20px;
+            cursor: pointer;
+            color: #e4e6eb;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        .context-menu-item:hover {
+            background: #2b3542;
+        }
+        
+        .upload-video-btn {
+            position: fixed;
+            bottom: 80px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            z-index: 100;
+        }
+        
+        .upload-video-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        .message-time {
+            font-size: 11px;
+            color: #8e9297;
+            margin-top: 5px;
+            text-align: right;
+        }
+        
+        .input-area {
+            padding: 15px 20px;
+            background: #17212b;
+            border-top: 1px solid #242f3d;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .upload-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #2b5278;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        
+        .upload-btn:hover {
+            background: #3a6a9a;
+        }
+        
+        .message-input {
+            flex: 1;
+            padding: 10px 15px;
+            background: #242f3d;
+            border: none;
+            border-radius: 20px;
+            color: #e4e6eb;
+            font-size: 14px;
+        }
+        
+        .message-input:focus {
+            outline: none;
+            background: #2b3542;
+        }
+        
+        .send-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #2b5278;
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        
+        .send-btn:hover {
+            background: #3a6a9a;
+        }
+        
+        .empty-state {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #8e9297;
+        }
+        
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #8e9297;
+        }
+        
+        .upload-progress-container {
+            position: fixed;
+            bottom: 150px;
+            right: 30px;
+            background: #17212b;
+            border: 1px solid #242f3d;
+            border-radius: 12px;
+            padding: 20px;
+            min-width: 300px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1000;
+            display: none;
+        }
+        
+        .upload-progress-container.show {
+            display: block;
+        }
+        
+        .upload-progress-title {
+            color: #e4e6eb;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .upload-progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #242f3d;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        
+        .upload-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .upload-progress-text {
+            color: #8e9297;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        .upload-progress-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: transparent;
+            border: none;
+            color: #8e9297;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 5px;
+        }
+        
+        .upload-progress-close:hover {
+            color: #e4e6eb;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <div class="chat-avatar">TG</div>
+            <h1>Telegram</h1>
+            <button class="logout-btn" onclick="logout()" title="Cerrar sesión">🚪</button>
+        </div>
+        <input type="text" class="search-box" placeholder="Buscar..." id="searchBox" oninput="filterChats()">
+        <div class="folder-tabs" id="folderTabs">
+            <button class="folder-tab active" onclick="switchFolder('all')">
+                <span>💬</span> Todos
+            </button>
+            <button class="folder-tab" onclick="switchFolder('users')">
+                <span>👤</span> Personas
+            </button>
+            <button class="folder-tab" onclick="switchFolder('groups')">
+                <span>👥</span> Grupos
+            </button>
+            <button class="folder-tab" onclick="switchFolder('channels')">
+                <span>📢</span> Canales
+            </button>
+            <button class="folder-tab" onclick="switchFolder('pinned')">
+                <span>📌</span> Fijados
+            </button>
+        </div>
+        <div class="chats-list" id="chatsList">
+            <div class="loading">Cargando chats...</div>
+        </div>
+    </div>
+    
+    <div class="main-content">
+        <div class="chat-header" id="chatHeader" style="display: none;">
+            <div class="chat-header-avatar" id="chatHeaderAvatar">?</div>
+            <div class="chat-header-info">
+                <h2 id="chatHeaderName">Selecciona un chat</h2>
+            </div>
+        </div>
+        
+        <div class="messages-area" id="messagesArea">
+            <div class="empty-state">
+                <div class="empty-state-icon">💬</div>
+                <p>Selecciona un chat para comenzar</p>
+            </div>
+        </div>
+        
+        <div class="input-area" id="inputArea" style="display: none;">
+            <input type="file" id="videoInput" accept="video/*">
+            <button class="upload-btn" onclick="document.getElementById('videoInput').click()">📎</button>
+            <input type="text" class="message-input" id="messageInput" placeholder="Escribe un mensaje...">
+            <button class="send-btn" id="sendBtn">➤</button>
+        </div>
+        
+        <button class="upload-video-btn" id="uploadVideoBtn" title="Subir video" style="display: none;">📹</button>
+        
+        <div class="upload-progress-container" id="uploadProgress">
+            <button class="upload-progress-close" onclick="closeUploadProgress()">✕</button>
+            <div class="upload-progress-title" id="uploadProgressTitle">Subiendo video...</div>
+            <div class="upload-progress-bar">
+                <div class="upload-progress-fill" id="uploadProgressFill"></div>
+            </div>
+            <div class="upload-progress-text" id="uploadProgressText">0%</div>
+        </div>
+        
+        <div class="context-menu" id="contextMenu">
+            <div class="context-menu-item" onclick="copyVideoLink()">📋 Copiar link</div>
+            <div class="context-menu-item" onclick="downloadVideo()">💾 Descargar</div>
+            <div class="context-menu-item" onclick="closeContextMenu()">✕ Cerrar</div>
+        </div>
+    </div>
+    
+    <script>
+        let currentChatId = null;
+        let chats = [];
+        let chatFolders = [];  // Carpetas personalizadas de Telegram
+        let currentFolder = 'all';  // 'all' o folder.id
+        
+        // Cargar chats al iniciar
+        async function loadChats() {
+            try {
+                const response = await fetch('/api/chats');
+                const data = await response.json();
+                
+                console.log('Respuesta de chats:', data);
+                
+                if (data.error) {
+                    document.getElementById('chatsList').innerHTML = `<div class="loading">Error: ${data.error}</div>`;
+                    return;
+                }
+                
+                if (data.chats && Array.isArray(data.chats)) {
+                    chats = data.chats;
+                    chatFolders = data.folders || [];  // Carpetas personalizadas
+                    
+                    console.log(`✅ ${chats.length} chats cargados`);
+                    console.log(`✅ ${chatFolders.length} carpetas personalizadas`);
+                    console.log('📊 Estadísticas:', data.stats);
+                    
+                    // Renderizar pestañas de carpetas
+                    renderFolderTabs();
+                    
+                    // Renderizar chats
+                    renderChats();
+                } else {
+                    console.error('Formato de datos inválido:', data);
+                    document.getElementById('chatsList').innerHTML = '<div class="loading">Error: Formato de datos inválido</div>';
+                }
+            } catch (error) {
+                console.error('Error cargando chats:', error);
+                document.getElementById('chatsList').innerHTML = `<div class="loading">Error al cargar chats: ${error.message}</div>`;
+            }
+        }
+        
+        function renderFolderTabs() {
+            const container = document.getElementById('folderTabs');
+            if (!container) return;
+            
+            // Limpiar contenedor
+            container.innerHTML = '';
+            
+            // Agregar pestaña "Todos"
+            const allTab = document.createElement('button');
+            allTab.className = 'folder-tab' + (currentFolder === 'all' ? ' active' : '');
+            allTab.onclick = () => switchFolder('all');
+            allTab.innerHTML = `<span>💬</span> Todos <span class="folder-badge">${chats.length}</span>`;
+            container.appendChild(allTab);
+            
+            // Agregar carpetas personalizadas
+            chatFolders.forEach(folder => {
+                const folderTab = document.createElement('button');
+                folderTab.className = 'folder-tab' + (currentFolder === folder.id ? ' active' : '');
+                folderTab.onclick = () => switchFolder(folder.id);
+                
+                const icon = folder.icon_emoji ? folder.icon_emoji : '📁';
+                const unreadBadge = folder.unread_count > 0 ? `<span class="unread-badge">${folder.unread_count}</span>` : '';
+                
+                folderTab.innerHTML = `<span>${icon}</span> ${folder.title} <span class="folder-badge">${folder.chat_count}</span>${unreadBadge}`;
+                container.appendChild(folderTab);
+            });
+        }
+        
+        function switchFolder(folderId) {
+            currentFolder = folderId;
+            
+            // Actualizar pestañas activas
+            document.querySelectorAll('.folder-tab').forEach(tab => {
+                tab.classList.remove('active');
+                // Verificar si esta pestaña corresponde a la carpeta seleccionada
+                const tabText = tab.textContent.trim();
+                if (folderId === 'all' && tabText.includes('Todos')) {
+                    tab.classList.add('active');
+                } else if (folderId !== 'all') {
+                    // Para carpetas personalizadas, verificar el onclick
+                    const onclickStr = tab.onclick ? tab.onclick.toString() : '';
+                    if (onclickStr.includes(`'${folderId}'`) || onclickStr.includes(`"${folderId}"`)) {
+                        tab.classList.add('active');
+                    }
+                }
+            });
+            
+            // Limpiar búsqueda
+            document.getElementById('searchBox').value = '';
+            
+            // Renderizar chats de la carpeta seleccionada
+            renderChats();
+        }
+        
+        function filterChats() {
+            const searchTerm = document.getElementById('searchBox').value.toLowerCase();
+            renderChats(searchTerm);
+        }
+        
+        function renderChats(searchTerm = '') {
+            const container = document.getElementById('chatsList');
+            if (!container) {
+                console.error('No se encontró el contenedor de chats');
+                return;
+            }
+            
+            // Obtener chats de la carpeta actual
+            let chatsToShow = [];
+            
+            if (currentFolder === 'all') {
+                chatsToShow = chats;
+            } else {
+                // Buscar la carpeta seleccionada
+                const selectedFolder = chatFolders.find(f => f.id === currentFolder);
+                if (selectedFolder) {
+                    chatsToShow = selectedFolder.chats || [];
+                } else {
+                    chatsToShow = chats;
+                }
+            }
+            
+            // Aplicar filtro de búsqueda si existe
+            if (searchTerm) {
+                chatsToShow = chatsToShow.filter(chat => 
+                    chat.name.toLowerCase().includes(searchTerm)
+                );
+            }
+            
+            if (!chatsToShow || chatsToShow.length === 0) {
+                container.innerHTML = `<div class="loading">No hay chats en esta carpeta${searchTerm ? ' que coincidan con la búsqueda' : ''}</div>`;
+                return;
+            }
+            
+            try {
+                // Limpiar contenedor
+                container.innerHTML = '';
+                
+                // Crear elementos de chat uno por uno
+                chatsToShow.forEach(chat => {
+                    const chatItem = document.createElement('div');
+                    chatItem.className = 'chat-item';
+                    chatItem.onclick = () => selectChat(chat.id, chat.name);
+                    
+                    const initial = chat.name ? chat.name.charAt(0).toUpperCase() : '?';
+                    const lastMsg = chat.last_message ? (chat.last_message.text || 'Sin mensajes') : 'Sin mensajes';
+                    const time = chat.last_message && chat.last_message.date 
+                        ? new Date(chat.last_message.date * 1000).toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'})
+                        : '';
+                    
+                    // Limitar longitud del mensaje
+                    const previewMsg = lastMsg.length > 50 ? lastMsg.substring(0, 50) + '...' : lastMsg;
+                    
+                    // Icono según tipo de chat
+                    let typeIcon = '💬';
+                    let typeClass = '';
+                    if (chat.type === 'user') typeIcon = '👤';
+                    else if (chat.type === 'group') typeIcon = '👥';
+                    else if (chat.type === 'supergroup') typeIcon = '👥';
+                    else if (chat.type === 'channel') typeIcon = '📢';
+                    
+                    // Badge de tipo
+                    const typeBadge = chat.type ? `<span class="chat-type-badge ${chat.type}">${chat.type}</span>` : '';
+                    
+                    chatItem.innerHTML = `
+                        <div class="chat-avatar">${typeIcon}</div>
+                        <div class="chat-info">
+                            <div class="chat-name">
+                                ${chat.name || 'Sin nombre'}
+                                ${typeBadge}
+                                ${chat.is_verified ? '✓' : ''}
+                                ${chat.is_premium ? '⭐' : ''}
+                            </div>
+                            <div class="chat-preview">${previewMsg}</div>
+                        </div>
+                        ${time ? `<div class="chat-time">${time}</div>` : ''}
+                        ${chat.unread_count > 0 ? `<div class="unread-badge">${chat.unread_count}</div>` : ''}
+                    `;
+                    
+                    container.appendChild(chatItem);
+                });
+                
+                console.log(`✅ ${chatsToShow.length} chats renderizados de la carpeta "${currentFolder}"`);
+            } catch (error) {
+                console.error('Error renderizando chats:', error);
+                container.innerHTML = '<div class="loading">Error al mostrar chats</div>';
+            }
+        }
+        
+        async function selectChat(chatId, chatName) {
+            currentChatId = chatId;
+            
+            // Actualizar UI
+            document.querySelectorAll('.chat-item').forEach(item => item.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            
+            document.getElementById('chatHeader').style.display = 'flex';
+            document.getElementById('chatHeaderName').textContent = chatName;
+            document.getElementById('chatHeaderAvatar').textContent = chatName.charAt(0).toUpperCase();
+            document.getElementById('inputArea').style.display = 'flex';
+            document.getElementById('uploadVideoBtn').style.display = 'block';
+            document.getElementById('messagesArea').innerHTML = '<div class="loading">Cargando mensajes...</div>';
+            
+            // Cargar mensajes
+            await loadMessages(chatId);
+        }
+        
+        async function loadMessages(chatId) {
+            console.log('🔄 Cargando mensajes para chat:', chatId);
+            try {
+                const response = await fetch(`/api/chat/${chatId}/messages?limit=50`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('📦 Respuesta de mensajes:', data);
+                
+                if (data.error) {
+                    console.error('❌ Error en respuesta:', data.error);
+                    document.getElementById('messagesArea').innerHTML = `<div class="loading">Error: ${data.error}</div>`;
+                    return;
+                }
+                
+                if (data.messages && Array.isArray(data.messages)) {
+                    console.log(`✅ ${data.messages.length} mensajes recibidos`);
+                    renderMessages(data.messages);
+                } else {
+                    console.error('❌ Formato de datos inválido:', data);
+                    document.getElementById('messagesArea').innerHTML = '<div class="loading">Error: Formato de datos inválido</div>';
+                }
+            } catch (error) {
+                console.error('❌ Error cargando mensajes:', error);
+                document.getElementById('messagesArea').innerHTML = `<div class="loading">Error al cargar mensajes: ${error.message}</div>`;
+            }
+        }
+        
+        let currentVideoUrl = null;
+        
+        function renderMessages(messages) {
+            const container = document.getElementById('messagesArea');
+            if (messages.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">💬</div><p>No hay mensajes</p></div>';
+                return;
+            }
+            
+            container.innerHTML = messages.reverse().map(msg => {
+                const time = msg.date ? new Date(msg.date * 1000).toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'}) : '';
+                const isOwn = msg.from_id === null || msg.from_id === 'None';
+                
+                let content = '';
+                // Si tiene video, mostrar el reproductor (prioridad sobre el texto)
+                if (msg.video_url) {
+                    console.log('🎬 Renderizando video:', msg.video_url);
+                    // URL para compartir (watch_url si existe, sino construir desde video_url)
+                    const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
+                    const fullUrl = window.location.origin + watchUrl;
+                    // Usar la API directa para reproducir en la interfaz
+                    content = `
+                        <div class="message-video" oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')">
+                            <video controls preload="metadata" style="max-width: 100%; border-radius: 8px; background: #000;">
+                                <source src="${msg.video_url}" type="video/mp4">
+                                Tu navegador no soporta video.
+                            </video>
+                        </div>
+                    `;
+                    // Si también tiene texto (caption), mostrarlo debajo del video
+                    if (msg.text && msg.text.trim()) {
+                        content += `<div class="message-caption" style="margin-top: 8px; font-size: 0.9em; opacity: 0.8;">${msg.text}</div>`;
+                    }
+                } else if (msg.text) {
+                    // Si no tiene video, mostrar solo el texto
+                    console.log('📝 Renderizando solo texto:', msg.text);
+                    content = `<div>${msg.text}</div>`;
+                }
+                
+                // Debug: mostrar información del mensaje
+                if (msg.media && msg.media.type === 'video' && !msg.video_url) {
+                    console.warn('⚠️ Mensaje tiene media tipo video pero no tiene video_url:', msg);
+                }
+                
+                return `
+                    <div class="message ${isOwn ? 'own' : ''}">
+                        ${content}
+                        <div class="message-time">${time}</div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Scroll al final
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function showContextMenu(event, videoUrl) {
+            currentVideoUrl = videoUrl;
+            const menu = document.getElementById('contextMenu');
+            menu.style.display = 'block';
+            menu.style.left = event.pageX + 'px';
+            menu.style.top = event.pageY + 'px';
+        }
+        
+        function closeContextMenu() {
+            document.getElementById('contextMenu').style.display = 'none';
+            currentVideoUrl = null;
+        }
+        
+        function copyVideoLink() {
+            if (currentVideoUrl) {
+                navigator.clipboard.writeText(currentVideoUrl).then(() => {
+                    alert('Link copiado al portapapeles: ' + currentVideoUrl);
+                    closeContextMenu();
+                }).catch(err => {
+                    // Fallback para navegadores antiguos
+                    const textarea = document.createElement('textarea');
+                    textarea.value = currentVideoUrl;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    alert('Link copiado al portapapeles: ' + currentVideoUrl);
+                    closeContextMenu();
+                });
+            }
+        }
+        
+        function downloadVideo() {
+            if (currentVideoUrl) {
+                window.open(currentVideoUrl, '_blank');
+                closeContextMenu();
+            }
+        }
+        
+        // Cerrar menú al hacer click fuera
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.context-menu') && !e.target.closest('.message-video')) {
+                closeContextMenu();
+            }
+        });
+        
+        let currentUploadId = null;
+        let progressInterval = null;
+        
+        // Función para mostrar progreso
+        function showUploadProgress() {
+            const progressContainer = document.getElementById('uploadProgress');
+            progressContainer.classList.add('show');
+        }
+        
+        function closeUploadProgress() {
+            const progressContainer = document.getElementById('uploadProgress');
+            progressContainer.classList.remove('show');
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+            currentUploadId = null;
+        }
+        
+        function updateUploadProgress(progress, status) {
+            const fill = document.getElementById('uploadProgressFill');
+            const text = document.getElementById('uploadProgressText');
+            const title = document.getElementById('uploadProgressTitle');
+            
+            if (!fill || !text || !title) {
+                console.warn('Elementos de progreso no encontrados');
+                return;
+            }
+            
+            fill.style.width = progress + '%';
+            text.textContent = progress + '%';
+            
+            if (status === 'completed') {
+                title.textContent = '✅ Video subido exitosamente';
+                // Recargar mensajes inmediatamente cuando se complete
+                if (currentChatId) {
+                    console.log('🔄 Recargando mensajes después de subir video...');
+                    setTimeout(async () => {
+                        await loadMessages(currentChatId);
+                        closeUploadProgress();
+                    }, 1000);
+                } else {
+                    setTimeout(() => {
+                        closeUploadProgress();
+                    }, 2000);
+                }
+            } else if (status === 'error') {
+                title.textContent = '❌ Error al subir video';
+                setTimeout(() => {
+                    closeUploadProgress();
+                }, 3000);
+            }
+        }
+        
+        // Función para monitorear el progreso
+        async function monitorUploadProgress(uploadId) {
+            if (!uploadId) {
+                console.warn('No se proporcionó upload_id para monitorear');
+                return;
+            }
+            
+            // Limpiar cualquier intervalo anterior
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+            
+            currentUploadId = uploadId;
+            showUploadProgress();
+            
+            // Iniciar inmediatamente con 0%
+            updateUploadProgress(0, 'uploading');
+            
+            // Consultar progreso muy frecuentemente para actualización en tiempo real
+            progressInterval = setInterval(async () => {
+                try {
+                    // Agregar timestamp para evitar cache del navegador
+                    const response = await fetch(`/api/upload/progress/${uploadId}?t=${Date.now()}`, {
+                        method: 'GET',
+                        cache: 'no-store',
+                        headers: {
+                            'Cache-Control': 'no-cache, no-store, must-revalidate',
+                            'Pragma': 'no-cache'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const progress = data.progress || 0;
+                        const status = data.status || 'uploading';
+                        
+                        // Actualizar progreso
+                        updateUploadProgress(progress, status);
+                        
+                        // Loggear solo cada 10% para no saturar la consola
+                        if (progress % 10 === 0 || progress === 100) {
+                            console.log(`📊 Progreso: ${progress}%`);
+                        }
+                        
+                        if (status === 'completed') {
+                            clearInterval(progressInterval);
+                            progressInterval = null;
+                            
+                            // Recargar mensajes cuando se complete
+                            if (currentChatId) {
+                                console.log('✅ Subida completada, recargando mensajes...');
+                                setTimeout(async () => {
+                                    await loadMessages(currentChatId);
+                                }, 1500);
+                            }
+                        } else if (status === 'error') {
+                            clearInterval(progressInterval);
+                            progressInterval = null;
+                        }
+                    } else if (response.status === 404) {
+                        // Si no se encuentra, puede ser que aún no se haya iniciado
+                        // No hacer nada, seguir intentando
+                    } else {
+                        console.warn('Error obteniendo progreso:', response.status);
+                    }
+                } catch (error) {
+                    console.error('Error obteniendo progreso:', error);
+                }
+            }, 100); // Verificar cada 100ms para actualización muy fluida
+        }
+        
+        // Función para subir video
+        async function uploadVideo(file) {
+            if (!file || !currentChatId) {
+                alert('Selecciona un chat primero');
+                return;
+            }
+            
+            // Mostrar progreso inmediatamente
+            showUploadProgress();
+            updateUploadProgress(0, 'uploading');
+            
+            const formData = new FormData();
+            formData.append('video', file);
+            formData.append('chat_id', currentChatId);
+            
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    // Iniciar monitoreo de progreso si hay upload_id
+                    if (data.upload_id) {
+                        // Iniciar monitoreo inmediatamente
+                        monitorUploadProgress(data.upload_id);
+                        // El monitoreo se encargará de recargar los mensajes cuando termine
+                    } else {
+                        // Si no hay upload_id, marcar como completado y recargar
+                        updateUploadProgress(100, 'completed');
+                        setTimeout(async () => {
+                            await loadMessages(currentChatId);
+                        }, 2000);
+                    }
+                } else {
+                    closeUploadProgress();
+                    alert('Error: ' + (data.error || 'Error al subir video'));
+                }
+            } catch (error) {
+                closeUploadProgress();
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        // Subir video desde input
+        document.getElementById('videoInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                await uploadVideo(file);
+                e.target.value = '';
+            }
+        });
+        
+        // Subir video desde botón flotante
+        document.getElementById('uploadVideoBtn').addEventListener('click', () => {
+            document.getElementById('videoInput').click();
+        });
+        
+        // Enviar mensaje
+        document.getElementById('sendBtn').addEventListener('click', sendMessage);
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            if (!text || !currentChatId) return;
+            
+            try {
+                const response = await fetch('/api/send_message', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        chat_id: currentChatId,
+                        text: text
+                    })
+                });
+                
+                const data = await response.json();
+                if (response.ok) {
+                    // Recargar mensajes para ver el nuevo mensaje
+                    await loadMessages(currentChatId);
+                    input.value = '';
+                } else {
+                    alert('Error: ' + (data.error || 'Error al enviar mensaje'));
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        // Función para cerrar sesión
+        async function logout() {
+            if (!confirm('¿Estás seguro de que quieres cerrar sesión?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/logout', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                if (response.ok) {
+                    window.location.href = '/';
+                } else {
+                    alert('Error al cerrar sesión');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                // Redirigir de todas formas
+                window.location.href = '/';
+            }
+        }
+        
+        // Verificar conexión y cargar chats
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                if (!data.connected) {
+                    window.location.href = '/';
+                    return;
+                }
+                // Si está conectado, cargar chats
+                console.log('✅ Conectado, cargando chats...');
+                await loadChats();
+            } catch (error) {
+                console.error('Error verificando conexión:', error);
+                window.location.href = '/';
+            }
+        });
+    </script>
+</body>
+</html>
+

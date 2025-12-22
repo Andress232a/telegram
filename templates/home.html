@@ -886,21 +886,53 @@
         }
         
         function copyVideoLink() {
-            if (currentVideoUrl) {
+            if (!currentVideoUrl) {
+                alert('No hay link de video disponible');
+                return;
+            }
+            
+            // Método moderno con Clipboard API
+            if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(currentVideoUrl).then(() => {
-                    alert('Link copiado al portapapeles: ' + currentVideoUrl);
+                    alert('✅ Link copiado al portapapeles:\n' + currentVideoUrl);
                     closeContextMenu();
                 }).catch(err => {
-                    // Fallback para navegadores antiguos
-                    const textarea = document.createElement('textarea');
-                    textarea.value = currentVideoUrl;
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textarea);
-                    alert('Link copiado al portapapeles: ' + currentVideoUrl);
-                    closeContextMenu();
+                    console.error('Error al copiar con clipboard API:', err);
+                    // Intentar método fallback
+                    copyVideoLinkFallback();
                 });
+            } else {
+                // Usar método fallback directamente
+                copyVideoLinkFallback();
+            }
+        }
+        
+        function copyVideoLinkFallback() {
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = currentVideoUrl;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                textarea.style.left = '-999999px';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                
+                if (successful) {
+                    alert('✅ Link copiado al portapapeles:\n' + currentVideoUrl);
+                } else {
+                    // Último recurso: mostrar el link para copiar manualmente
+                    prompt('Copia este link (Ctrl+C):', currentVideoUrl);
+                }
+                closeContextMenu();
+            } catch (err) {
+                console.error('Error al copiar con método fallback:', err);
+                // Último recurso: mostrar el link para copiar manualmente
+                prompt('Copia este link (Ctrl+C):', currentVideoUrl);
+                closeContextMenu();
             }
         }
         

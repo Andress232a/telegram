@@ -45,6 +45,7 @@ video_cache_temp/
 # Configuration file
 telegram_config.json
 video_database.json
+db_config.json
 
 # IDE
 .vscode/

@@ -12,6 +12,8 @@ from werkzeug.utils import secure_filename
 import time
 from datetime import datetime
 import threading
+import pymysql
+from contextlib import contextmanager
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -58,35 +60,164 @@ cleanup_old_uploads()
 
 # Almacenar clientes de Telegram por sesión
 telegram_clients = {}
-video_database = {}  # Almacenar información de videos subidos
 upload_progress = {}  # Almacenar progreso de subidas
 video_memory_cache = {}  # Caché en memoria de videos (como Telegram - pre-cargados)
 CONFIG_FILE = 'telegram_config.json'  # Archivo para guardar configuración
-VIDEO_DB_FILE = 'video_database.json'  # Archivo para persistir video_database
+DB_CONFIG_FILE = 'db_config.json'  # Archivo de configuración de MySQL
 
-# Cargar video_database desde archivo si existe
-def load_video_database():
-    """Cargar video_database desde archivo JSON"""
-    global video_database
+# Cargar configuración de base de datos
+def load_db_config():
+    """Cargar configuración de MySQL desde archivo"""
     try:
-        if os.path.exists(VIDEO_DB_FILE):
-            with open(VIDEO_DB_FILE, 'r', encoding='utf-8') as f:
-                video_database = json.load(f)
-                print(f"✅ Video database cargado: {len(video_database)} videos")
+        if os.path.exists(DB_CONFIG_FILE):
+            with open(DB_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        else:
+            print("⚠️ db_config.json no encontrado. Usando valores por defecto.")
+            return {
+                'host': 'localhost',
+                'user': 'telegram_user',
+                'password': '',
+                'database': 'telegram_app',
+                'charset': 'utf8mb4'
+            }
     except Exception as e:
-        print(f"⚠️ Error cargando video database: {e}")
-        video_database = {}
+        print(f"⚠️ Error cargando configuración de DB: {e}")
+        return None
 
-def save_video_database():
-    """Guardar video_database a archivo JSON"""
+db_config = load_db_config()
+
+# Función para obtener conexión a MySQL
+@contextmanager
+def get_db_connection():
+    """Context manager para obtener conexión a MySQL"""
+    if not db_config:
+        raise Exception("Configuración de base de datos no disponible")
+    
+    conn = None
     try:
-        with open(VIDEO_DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(video_database, f, indent=2, ensure_ascii=False)
+        conn = pymysql.connect(
+            host=db_config['host'],
+            user=db_config['user'],
+            password=db_config['password'],
+            database=db_config['database'],
+            charset=db_config.get('charset', 'utf8mb4'),
+            cursorclass=pymysql.cursors.DictCursor
+        )
+        yield conn
     except Exception as e:
-        print(f"⚠️ Error guardando video database: {e}")
+        print(f"❌ Error de conexión a MySQL: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
 
-# Cargar al iniciar
-load_video_database()
+# Funciones para trabajar con videos en MySQL
+def get_video_from_db(video_id):
+    """Obtener información de un video desde MySQL"""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM videos WHERE video_id = %s",
+                    (video_id,)
+                )
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        'message_id': result['message_id'],
+                        'chat_id': result['chat_id'],
+                        'filename': result['filename'],
+                        'timestamp': result['timestamp'].timestamp() if isinstance(result['timestamp'], datetime) else result['timestamp'],
+                        'file_size': result.get('file_size'),
+                        'phone': None  # No almacenamos phone en la tabla, se obtiene de otra forma
+                    }
+                return None
+    except Exception as e:
+        print(f"❌ Error obteniendo video desde DB: {e}")
+        return None
+
+def find_video_by_message(chat_id, message_id, phone):
+    """Buscar video existente por chat_id, message_id y phone"""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Buscar por chat_id y message_id (phone no está en la tabla, se maneja en la app)
+                cursor.execute(
+                    "SELECT video_id FROM videos WHERE chat_id = %s AND message_id = %s ORDER BY created_at DESC LIMIT 1",
+                    (str(chat_id), message_id)
+                )
+                result = cursor.fetchone()
+                if result:
+                    return result['video_id']
+                return None
+    except Exception as e:
+        print(f"❌ Error buscando video en DB: {e}")
+        return None
+
+def save_video_to_db(video_id, chat_id, message_id, filename, timestamp, file_size=None):
+    """Guardar o actualizar video en MySQL"""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Verificar si existe
+                cursor.execute("SELECT video_id FROM videos WHERE video_id = %s", (video_id,))
+                exists = cursor.fetchone()
+                
+                if exists:
+                    # Actualizar
+                    cursor.execute(
+                        """UPDATE videos SET chat_id = %s, message_id = %s, filename = %s, 
+                           timestamp = FROM_UNIXTIME(%s), file_size = %s, updated_at = NOW() 
+                           WHERE video_id = %s""",
+                        (str(chat_id), message_id, filename, timestamp, file_size, video_id)
+                    )
+                else:
+                    # Insertar nuevo
+                    cursor.execute(
+                        """INSERT INTO videos (video_id, chat_id, message_id, filename, timestamp, file_size) 
+                           VALUES (%s, %s, %s, %s, FROM_UNIXTIME(%s), %s)""",
+                        (video_id, str(chat_id), message_id, filename, timestamp, file_size)
+                    )
+                conn.commit()
+                return True
+    except Exception as e:
+        print(f"❌ Error guardando video en DB: {e}")
+        return False
+
+def get_all_videos_from_db():
+    """Obtener todos los videos desde MySQL"""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM videos ORDER BY timestamp DESC")
+                results = cursor.fetchall()
+                videos = {}
+                for row in results:
+                    video_id = row['video_id']
+                    videos[video_id] = {
+                        'message_id': row['message_id'],
+                        'chat_id': row['chat_id'],
+                        'filename': row['filename'],
+                        'timestamp': row['timestamp'].timestamp() if isinstance(row['timestamp'], datetime) else row['timestamp'],
+                        'file_size': row.get('file_size')
+                    }
+                return videos
+    except Exception as e:
+        print(f"❌ Error obteniendo todos los videos desde DB: {e}")
+        return {}
+
+# Verificar conexión a MySQL al iniciar
+if db_config:
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) as count FROM videos")
+                result = cursor.fetchone()
+                print(f"✅ Conexión a MySQL exitosa. Videos en DB: {result['count']}")
+    except Exception as e:
+        print(f"⚠️ Advertencia: No se pudo conectar a MySQL: {e}")
+        print("⚠️ La aplicación continuará pero algunas funciones pueden no funcionar correctamente.")
 
 # Almacenar loops por thread
 _thread_loops = {}
@@ -823,21 +954,8 @@ def get_messages(chat_id):
                                 print(f"🎬 Video detectado en mensaje {message.id}: mime_type={mime_type}")
                                 
                                 # Verificar si ya existe un video_id para este mensaje
-                                # Buscar por message_id y chat_id (comparar como string e int)
-                                existing_video_id = None
                                 chat_id_str = str(chat_id)
-                                for vid_id, vid_info in video_database.items():
-                                    vid_chat_id = str(vid_info.get('chat_id', ''))
-                                    vid_msg_id = vid_info.get('message_id')
-                                    vid_phone = vid_info.get('phone')
-                                    
-                                    # Comparar message_id, chat_id (como string) y phone
-                                    if (vid_msg_id == message.id and 
-                                        (vid_chat_id == chat_id_str or vid_chat_id == str(int(chat_id)) or str(int(vid_chat_id)) == chat_id_str) and 
-                                        vid_phone == phone):
-                                        existing_video_id = vid_id
-                                        print(f"✅ Video existente encontrado: {vid_id} (Message={message.id}, Chat={chat_id_str})")
-                                        break
+                                existing_video_id = find_video_by_message(chat_id_str, message.id, phone)
                                 
                                 # Si no existe, crear uno nuevo
                                 if not existing_video_id:
@@ -850,16 +968,17 @@ def get_messages(chat_id):
                                                 filename = attr.file_name
                                                 break
                                     
-                                    video_database[video_id] = {
-                                        'message_id': message.id,
-                                        'chat_id': str(chat_id),
-                                        'filename': filename,
-                                        'timestamp': message.date.timestamp() if message.date else time.time(),
-                                        'phone': phone
-                                    }
-                                    existing_video_id = video_id
-                                    save_video_database()  # Guardar inmediatamente para persistencia
-                                    print(f"✅ Video nuevo registrado: Message={message.id}, VideoID={existing_video_id}, Filename={filename}")
+                                    timestamp = message.date.timestamp() if message.date else time.time()
+                                    file_size = doc.size if hasattr(doc, 'size') else None
+                                    
+                                    if save_video_to_db(video_id, chat_id_str, message.id, filename, timestamp, file_size):
+                                        existing_video_id = video_id
+                                        print(f"✅ Video nuevo registrado: Message={message.id}, VideoID={existing_video_id}, Filename={filename}")
+                                    else:
+                                        print(f"⚠️ Error guardando video en DB, pero continuando...")
+                                        existing_video_id = video_id
+                                else:
+                                    print(f"✅ Video existente encontrado: {existing_video_id} (Message={message.id}, Chat={chat_id_str})")
                                 
                                 msg_info['video_url'] = f'/api/video/{existing_video_id}'
                                 print(f"✅ Video URL asignado: {msg_info['video_url']}")
@@ -1104,16 +1223,11 @@ def upload_video():
             video_id = secrets.token_urlsafe(16)
             # Asegurarse de que chat_id sea string para consistencia
             chat_id_str = str(chat_id_param) if chat_id_param != 'me' else 'me'
-            video_database[video_id] = {
-                'message_id': message.id,
-                'chat_id': chat_id_str,
-                'filename': filename_param,
-                'timestamp': timestamp_param,
-                'phone': phone_param,
-                'telegram_file_id': None
-            }
-            save_video_database()  # Guardar inmediatamente
-            print(f"✅ Video subido a Telegram: ID={video_id}, Chat={chat_id_str}, Message={message.id}")
+            
+            if save_video_to_db(video_id, chat_id_str, message.id, filename_param, timestamp_param, file_size_param):
+                print(f"✅ Video subido a Telegram: ID={video_id}, Chat={chat_id_str}, Message={message.id}")
+            else:
+                print(f"⚠️ Error guardando video en DB, pero continuando...")
             
             # Guardar video_id en el progreso para que el frontend lo pueda obtener
             upload_progress[upload_id_param]['video_id'] = video_id
@@ -1210,7 +1324,8 @@ def get_upload_progress(upload_id):
 @app.route('/watch/<video_id>')
 def watch_video(video_id):
     """Página para ver el video"""
-    if video_id not in video_database:
+    video_info = get_video_from_db(video_id)
+    if not video_info:
         return "Video no encontrado", 404
     
     return render_template('watch.html', video_id=video_id)
@@ -1221,11 +1336,16 @@ def get_video(video_id):
     # Verificar si hay range request
     range_header = request.headers.get('Range', None)
     
-    if video_id not in video_database:
+    video_info = get_video_from_db(video_id)
+    if not video_info:
         return jsonify({'error': 'Video no encontrado'}), 404
     
-    video_info = video_database[video_id]
-    phone = video_info['phone']
+    # Obtener phone de la sesión o configuración guardada
+    phone = session.get('phone')
+    if not phone:
+        saved_config = load_saved_config()
+        if saved_config:
+            phone = saved_config.get('phone')
     
     try:
         # Cargar configuración si no hay sesión activa
@@ -1452,7 +1572,8 @@ def timestamp_to_date(timestamp):
 def list_videos():
     """Listar todos los videos subidos"""
     videos = []
-    for video_id, info in video_database.items():
+    all_videos = get_all_videos_from_db()
+    for video_id, info in all_videos.items():
         videos.append({
             'id': video_id,
             'filename': info['filename'],

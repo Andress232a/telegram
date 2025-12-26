@@ -1369,10 +1369,18 @@ def get_video(video_id):
             message_id = video_info['message_id']
             
             target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+            print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
             messages = await client.get_messages(target_chat, ids=message_id)
             
-            if not messages or not messages.media:
+            if not messages:
+                print(f"⚠️ Mensaje {message_id} no encontrado en chat {target_chat}")
                 return None, None, None
+            
+            if not messages.media:
+                print(f"⚠️ Mensaje {message_id} no tiene media")
+                return None, None, None
+            
+            print(f"✅ Mensaje {message_id} obtenido, tiene media: {type(messages.media).__name__}")
             
             # Obtener el documento del mensaje
             if hasattr(messages.media, 'document'):
@@ -1405,9 +1413,20 @@ def get_video(video_id):
             
             return None, None, None
         
-        messages, file_size, mime_type = run_async(get_video_info(), client_loop, timeout=30)
+        # Aumentar timeout para obtener información del video (60 segundos)
+        try:
+            messages, file_size, mime_type = run_async(get_video_info(), client_loop, timeout=60)
+        except asyncio.TimeoutError:
+            print(f"⏱️ Timeout al obtener información del video {video_id} desde Telegram")
+            return jsonify({'error': 'Tiempo de espera agotado al obtener el video. Intenta más tarde.'}), 504
+        except Exception as e:
+            print(f"❌ Error al obtener información del video {video_id}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({'error': f'Error al obtener el video: {str(e)}'}), 500
         
         if not messages:
+            print(f"⚠️ No se pudo obtener el mensaje del video {video_id} desde Telegram")
             return jsonify({'error': 'No se pudo obtener el video desde Telegram'}), 500
         
         # Si no hay mime_type, usar mp4 como fallback

@@ -56,10 +56,13 @@
         <video
             id="videoPlayer"
             controls
-            preload="auto"
+            autoplay
+            muted
             playsinline
+            preload="auto"
             style="width: 100%; max-width: 100vw; max-height: 100vh; background: #000;"
         >
+            <source id="videoSource" src="" type="video/mp4">
             Tu navegador no soporta la reproducción de video HTML5.
         </video>
         
@@ -81,12 +84,15 @@
             console.log('Configurando reproductor HTML5 nativo con streaming progresivo');
             console.log('Video URL:', videoUrl);
             
-            // Configurar para streaming progresivo (como en los mensajes)
-            videoElement.preload = 'auto'; // Igual que en el chat
-            videoElement.src = videoUrl;
-            
-            // No especificar type, dejar que el navegador lo detecte automáticamente
-            // Esto es importante porque el servidor puede servir diferentes tipos de video
+            // Configurar exactamente igual que en el chat
+            const sourceElement = document.getElementById('videoSource');
+            if (sourceElement) {
+                sourceElement.src = videoUrl;
+                sourceElement.type = 'video/mp4'; // Igual que en el chat
+            } else {
+                // Fallback: configurar directamente en el video
+                videoElement.src = videoUrl;
+            }
             
             // Forzar que el navegador use Range requests
             videoElement.load();

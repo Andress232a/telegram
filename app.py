@@ -1403,7 +1403,22 @@ def get_video(video_id):
             
             target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
             print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
+            
+            # Intentar obtener el mensaje específico
             messages = await client.get_messages(target_chat, ids=message_id)
+            
+            # Si no se encuentra, buscar en los mensajes recientes (como Telegram hace)
+            if not messages:
+                print(f"⚠️ Mensaje {message_id} no encontrado directamente, buscando en mensajes recientes...")
+                try:
+                    # Buscar en los últimos 100 mensajes del chat
+                    async for message in client.iter_messages(target_chat, limit=100):
+                        if message.id == message_id and message.media:
+                            messages = message
+                            print(f"✅ Mensaje {message_id} encontrado en búsqueda reciente")
+                            break
+                except Exception as e:
+                    print(f"⚠️ Error buscando mensaje: {e}")
             
             if not messages:
                 print(f"⚠️ Mensaje {message_id} no encontrado en chat {target_chat}")
@@ -1442,6 +1457,22 @@ def get_video(video_id):
                         # Si aún no es video, usar mp4 como fallback
                         if not mime_type.startswith('video/'):
                             mime_type = 'video/mp4'
+                
+                # Actualizar el message_id en la base de datos si cambió (por si Telegram lo actualizó)
+                if messages.id != message_id:
+                    print(f"⚠️ Message ID cambió: {message_id} -> {messages.id}, actualizando DB...")
+                    try:
+                        with get_db_connection() as conn:
+                            with conn.cursor() as cursor:
+                                cursor.execute(
+                                    "UPDATE videos SET message_id = %s WHERE video_id = %s",
+                                    (messages.id, video_id)
+                                )
+                                conn.commit()
+                        print(f"✅ Message ID actualizado en DB")
+                    except Exception as e:
+                        print(f"⚠️ Error actualizando message_id: {e}")
+                
                 return messages, file_size, mime_type
             
             return None, None, None

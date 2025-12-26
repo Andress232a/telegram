@@ -845,70 +845,90 @@
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
-                    // Miniatura pequeña con icono de play (estilo Telegram)
+                    const videoId = `video-thumb-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    // Miniatura con video visible (estilo Telegram)
                     content = `
                         <div class="message-video-thumbnail" 
                              onclick="window.open('${watchUrl}', '_blank')"
                              oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')"
                              style="
                                  position: relative;
-                                 width: 200px;
-                                 height: 120px;
-                                 border-radius: 8px;
+                                 width: 320px;
+                                 height: 180px;
+                                 max-width: 100%;
+                                 border-radius: 12px;
                                  background: #1a1a1a;
                                  cursor: pointer;
                                  overflow: hidden;
                                  display: flex;
                                  align-items: center;
                                  justify-content: center;
-                                 transition: transform 0.2s;
+                                 transition: transform 0.2s, opacity 0.2s;
+                                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
                              "
-                             onmouseover="this.style.transform='scale(1.02)'"
-                             onmouseout="this.style.transform='scale(1)'"
+                             onmouseover="this.style.transform='scale(1.02)'; this.style.opacity='0.9'"
+                             onmouseout="this.style.transform='scale(1)'; this.style.opacity='1'"
                         >
                             <video
+                                id="${videoId}"
                                 preload="metadata"
                                 muted
+                                playsinline
                                 style="
                                     width: 100%;
                                     height: 100%;
                                     object-fit: cover;
-                                    opacity: 0.7;
+                                    display: block;
                                 "
                             >
                                 <source src="${msg.video_url}" type="video/mp4">
                             </video>
                             <div style="
                                 position: absolute;
-                                width: 48px;
-                                height: 48px;
+                                top: 0;
+                                left: 0;
+                                right: 0;
+                                bottom: 0;
+                                background: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 100%);
+                                pointer-events: none;
+                            "></div>
+                            <div style="
+                                position: absolute;
+                                width: 56px;
+                                height: 56px;
                                 border-radius: 50%;
-                                background: rgba(0, 0, 0, 0.6);
+                                background: rgba(0, 0, 0, 0.7);
                                 display: flex;
                                 align-items: center;
                                 justify-content: center;
                                 pointer-events: none;
+                                backdrop-filter: blur(4px);
                             ">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="white" style="margin-left: 2px;">
+                                <svg width="28" height="28" viewBox="0 0 24 24" fill="white" style="margin-left: 3px;">
                                     <path d="M8 5v14l11-7z"/>
                                 </svg>
                             </div>
-                            <div style="
-                                position: absolute;
-                                bottom: 8px;
-                                right: 8px;
-                                background: rgba(0, 0, 0, 0.7);
-                                color: white;
-                                padding: 4px 8px;
-                                border-radius: 4px;
-                                font-size: 11px;
-                                pointer-events: none;
-                            ">🎬 Video</div>
                         </div>
                     `;
+                    // Configurar el video para que muestre el primer frame
+                    setTimeout(() => {
+                        const videoEl = document.getElementById(videoId);
+                        if (videoEl) {
+                            // Cargar el primer frame del video
+                            videoEl.addEventListener('loadedmetadata', function() {
+                                videoEl.currentTime = 0.1; // Ir al primer frame
+                            });
+                            videoEl.addEventListener('seeked', function() {
+                                // Una vez que se carga el frame, pausar
+                                videoEl.pause();
+                            });
+                            // Intentar cargar el primer frame
+                            videoEl.load();
+                        }
+                    }, 100);
                     // Si también tiene texto (caption), mostrarlo debajo del video
                     if (msg.text && msg.text.trim()) {
-                        content += `<div class="message-caption" style="margin-top: 8px; font-size: 0.9em; opacity: 0.8;">${msg.text}</div>`;
+                        content += `<div class="message-caption" style="margin-top: 10px; font-size: 0.9em; opacity: 0.85; line-height: 1.4;">${msg.text}</div>`;
                     }
                 } else if (msg.text) {
                     // Si no tiene video, mostrar solo el texto

@@ -49,85 +49,84 @@
             display: none;
         }
         
-        .vjs-no-js {
-            display: block;
-        }
-        
-        .video-js.vjs-initialized .vjs-no-js {
-            display: none;
-        }
     </style>
 </head>
 <body>
     <div class="video-container">
         <video
             id="videoPlayer"
-            class="video-js vjs-default-skin vjs-big-play-centered"
             controls
             preload="auto"
+            style="width: 100%; max-width: 100vw; max-height: 100vh; background: #000;"
         >
-            <p class="vjs-no-js">
-                Para ver este video, por favor habilita JavaScript y considera actualizar a un navegador que
-                <a href="https://videojs.com/html5-video-support/" target="_blank">soporte video HTML5</a>.
-            </p>
+            Tu navegador no soporta la reproducción de video HTML5.
         </video>
         
         <div id="error" class="error"></div>
     </div>
     
-    <!-- Video.js JS -->
-    <script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
+    <!-- Video.js JS (opcional, mejora la experiencia) -->
+    <link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
+    <script src="https://vjs.zencdn.net/8.6.1/video.min.js" onerror="console.warn('Video.js no disponible, usando HTML5 nativo')"></script>
     <script>
         const videoId = '{{ video_id }}';
         const videoUrl = `/api/video/${videoId}`;
         const errorDiv = document.getElementById('error');
+        const videoElement = document.getElementById('videoPlayer');
         let player = null;
         
-        // Función para inicializar Video.js
-        function initVideoPlayer() {
-            // Verificar si Video.js está disponible
-            if (typeof videojs === 'undefined') {
-                console.error('Video.js no está disponible, usando reproductor HTML5 nativo');
-                // Fallback al reproductor HTML5 nativo
-                const videoElement = document.getElementById('videoPlayer');
-                if (videoElement) {
-                    videoElement.className = '';
-                    videoElement.src = videoUrl;
-                    videoElement.load();
-                    
-                    // Ocultar mensaje de vjs-no-js
-                    const noJsMsg = videoElement.querySelector('.vjs-no-js');
-                    if (noJsMsg) {
-                        noJsMsg.style.display = 'none';
+        // Función para configurar el reproductor HTML5 nativo
+        function setupNativePlayer() {
+            console.log('Configurando reproductor HTML5 nativo');
+            videoElement.src = videoUrl;
+            videoElement.load();
+            
+            videoElement.addEventListener('error', function(e) {
+                const error = videoElement.error;
+                let errorMsg = 'Error al cargar el video. Por favor, intenta más tarde.';
+                if (error) {
+                    switch(error.code) {
+                        case error.MEDIA_ERR_ABORTED:
+                            errorMsg = 'La carga del video fue cancelada.';
+                            break;
+                        case error.MEDIA_ERR_NETWORK:
+                            errorMsg = 'Error de red al cargar el video. Verifica tu conexión.';
+                            break;
+                        case error.MEDIA_ERR_DECODE:
+                            errorMsg = 'Error al decodificar el video. El formato puede no ser compatible.';
+                            break;
+                        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                            errorMsg = 'El formato del video no es compatible. Intenta descargarlo o usar otro navegador.';
+                            break;
                     }
-                    
-                    videoElement.addEventListener('error', function(e) {
-                        const error = videoElement.error;
-                        let errorMsg = 'Error al cargar el video. Por favor, intenta más tarde.';
-                        if (error) {
-                            switch(error.code) {
-                                case error.MEDIA_ERR_ABORTED:
-                                    errorMsg = 'La carga del video fue cancelada.';
-                                    break;
-                                case error.MEDIA_ERR_NETWORK:
-                                    errorMsg = 'Error de red al cargar el video. Verifica tu conexión.';
-                                    break;
-                                case error.MEDIA_ERR_DECODE:
-                                    errorMsg = 'Error al decodificar el video. El formato puede no ser compatible.';
-                                    break;
-                                case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                                    errorMsg = 'El formato del video no es compatible. Intenta descargarlo o usar otro navegador.';
-                                    break;
-                            }
-                        }
-                        errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: ${videoUrl}</small>`;
-                        errorDiv.style.display = 'block';
-                    });
                 }
-                return;
+                errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: ${videoUrl}</small>`;
+                errorDiv.style.display = 'block';
+                console.error('Error de video:', error);
+            });
+            
+            videoElement.addEventListener('loadeddata', function() {
+                errorDiv.style.display = 'none';
+                console.log('Video cargado correctamente');
+            });
+            
+            videoElement.addEventListener('canplay', function() {
+                errorDiv.style.display = 'none';
+            });
+        }
+        
+        // Función para mejorar con Video.js si está disponible
+        function enhanceWithVideoJS() {
+            if (typeof videojs === 'undefined') {
+                console.log('Video.js no disponible, usando HTML5 nativo');
+                return false;
             }
             
             try {
+                console.log('Mejorando reproductor con Video.js');
+                // Agregar clases de Video.js
+                videoElement.className = 'video-js vjs-default-skin vjs-big-play-centered';
+                
                 // Inicializar Video.js
                 player = videojs('videoPlayer', {
                     fluid: true,
@@ -136,48 +135,40 @@
                     html5: {
                         vhs: {
                             overrideNative: true
-                        },
-                        nativeVideoTracks: false,
-                        nativeAudioTracks: false,
-                        nativeTextTracks: false
+                        }
                     }
                 });
                 
-                // Configurar la fuente del video
+                // Configurar la fuente
                 player.src({
                     src: videoUrl,
                     type: 'video/mp4'
                 });
                 
-                // Manejar eventos de error
+                // Manejar errores
                 player.on('error', function() {
                     const error = player.error();
                     let errorMsg = 'Error al cargar el video. Por favor, intenta más tarde.';
-                    
                     if (error) {
                         switch(error.code) {
-                            case 1: // MEDIA_ERR_ABORTED
+                            case 1:
                                 errorMsg = 'La carga del video fue cancelada.';
                                 break;
-                            case 2: // MEDIA_ERR_NETWORK
+                            case 2:
                                 errorMsg = 'Error de red al cargar el video. Verifica tu conexión.';
                                 break;
-                            case 3: // MEDIA_ERR_DECODE
+                            case 3:
                                 errorMsg = 'Error al decodificar el video. El formato puede no ser compatible.';
                                 break;
-                            case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+                            case 4:
                                 errorMsg = 'El formato del video no es compatible. Intenta descargarlo o usar otro navegador.';
                                 break;
                         }
                     }
-                    
                     errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: ${videoUrl}</small>`;
                     errorDiv.style.display = 'block';
-                    console.error('Error de video:', error);
-                    console.error('Video URL:', videoUrl);
                 });
                 
-                // Ocultar error cuando el video se carga correctamente
                 player.on('loadeddata', function() {
                     errorDiv.style.display = 'none';
                 });
@@ -186,52 +177,41 @@
                     errorDiv.style.display = 'none';
                 });
                 
-                // Log para depuración
                 console.log('Video.js inicializado correctamente');
-                console.log('Cargando video:', videoUrl);
-                
-                // Cuando el reproductor esté listo
-                player.ready(function() {
-                    console.log('Video.js está listo');
-                    // Ocultar el mensaje de "vjs-no-js"
-                    const noJsMsg = document.querySelector('.vjs-no-js');
-                    if (noJsMsg) {
-                        noJsMsg.style.display = 'none';
-                    }
-                });
-                
+                return true;
             } catch (e) {
                 console.error('Error inicializando Video.js:', e);
-                // Fallback al reproductor HTML5 nativo
-                const videoElement = document.getElementById('videoPlayer');
-                if (videoElement) {
-                    videoElement.className = '';
-                    videoElement.src = videoUrl;
-                    videoElement.load();
-                    // Ocultar mensaje de vjs-no-js
-                    const noJsMsg = videoElement.querySelector('.vjs-no-js');
-                    if (noJsMsg) {
-                        noJsMsg.style.display = 'none';
-                    }
-                }
+                return false;
             }
         }
         
-        // Esperar a que el DOM y Video.js estén listos
+        // Inicializar cuando el DOM esté listo
+        function init() {
+            console.log('Inicializando reproductor de video');
+            console.log('Video URL:', videoUrl);
+            
+            // Primero configurar HTML5 nativo (siempre funciona)
+            setupNativePlayer();
+            
+            // Luego intentar mejorar con Video.js (opcional)
+            setTimeout(function() {
+                if (!enhanceWithVideoJS()) {
+                    console.log('Usando reproductor HTML5 nativo');
+                }
+            }, 200);
+        }
+        
+        // Ejecutar cuando el DOM esté listo
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() {
-                // Esperar un poco más para que Video.js se cargue desde el CDN
-                setTimeout(initVideoPlayer, 100);
-            });
+            document.addEventListener('DOMContentLoaded', init);
         } else {
-            // El DOM ya está listo, esperar a que Video.js se cargue
-            setTimeout(initVideoPlayer, 100);
+            init();
         }
         
         // También intentar cuando la ventana se carga completamente
         window.addEventListener('load', function() {
             if (!player && typeof videojs !== 'undefined') {
-                setTimeout(initVideoPlayer, 50);
+                setTimeout(enhanceWithVideoJS, 100);
             }
         });
     </script>

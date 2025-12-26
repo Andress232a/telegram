@@ -1316,9 +1316,24 @@
         
         // Función para mostrar el modal de subida de video
         function showVideoUploadModal(file) {
-            if (!file || !currentChatId) {
-                alert('Selecciona un chat primero');
+            if (!file) {
+                alert('No se seleccionó ningún archivo');
                 return;
+            }
+            
+            // Verificar si hay un chat seleccionado
+            if (!currentChatId) {
+                // Intentar obtener el chat del header visible
+                const chatHeader = document.getElementById('chatHeader');
+                if (chatHeader && chatHeader.style.display !== 'none') {
+                    // Si el header está visible, debería haber un chat seleccionado
+                    // Pero currentChatId no está establecido, así que mostrar el error
+                    alert('Selecciona un chat primero');
+                    return;
+                } else {
+                    alert('Selecciona un chat primero');
+                    return;
+                }
             }
             
             selectedVideoFile = file;
@@ -1347,8 +1362,15 @@
         
         // Función para confirmar y subir el video
         async function confirmVideoUpload() {
-            if (!selectedVideoFile || !currentChatId) {
+            if (!selectedVideoFile) {
                 alert('Error: No hay archivo seleccionado');
+                return;
+            }
+            
+            // Verificar nuevamente el chat antes de subir
+            if (!currentChatId) {
+                alert('Error: No hay chat seleccionado. Por favor, selecciona un chat primero.');
+                closeVideoUploadModal();
                 return;
             }
             

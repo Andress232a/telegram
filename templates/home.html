@@ -1320,6 +1320,52 @@
         // Variable para almacenar el archivo seleccionado
         let selectedVideoFile = null;
         
+        // Función para obtener el chat actualmente seleccionado
+        function getCurrentChatId() {
+            // Primero intentar desde la variable
+            if (currentChatId) {
+                return currentChatId;
+            }
+            
+            // Si no está en la variable, intentar desde el DOM
+            const activeChatItem = document.querySelector('.chat-item.active');
+            if (activeChatItem) {
+                const chatIdFromDOM = activeChatItem.getAttribute('data-chat-id');
+                if (chatIdFromDOM) {
+                    console.log('✅ Chat encontrado en DOM, actualizando currentChatId:', chatIdFromDOM);
+                    currentChatId = chatIdFromDOM;
+                    return chatIdFromDOM;
+                }
+            }
+            
+            // Verificar si el header está visible (indica que hay un chat seleccionado)
+            const chatHeader = document.getElementById('chatHeader');
+            if (chatHeader && chatHeader.style.display !== 'none') {
+                // Si el header está visible pero no hay elemento activo, buscar el último chat seleccionado
+                const allChatItems = document.querySelectorAll('.chat-item[data-chat-id]');
+                if (allChatItems.length > 0) {
+                    // Intentar obtener el chat_id del header o del primer chat
+                    const headerName = document.getElementById('chatHeaderName');
+                    if (headerName && headerName.textContent) {
+                        // Buscar el chat por nombre
+                        for (let item of allChatItems) {
+                            const chatName = item.querySelector('.chat-name')?.textContent;
+                            if (chatName && chatName.trim() === headerName.textContent.trim()) {
+                                const chatId = item.getAttribute('data-chat-id');
+                                if (chatId) {
+                                    console.log('✅ Chat encontrado por nombre, actualizando currentChatId:', chatId);
+                                    currentChatId = chatId;
+                                    return chatId;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return null;
+        }
+        
         // Función para mostrar el modal de subida de video
         function showVideoUploadModal(file) {
             if (!file) {
@@ -1327,37 +1373,18 @@
                 return;
             }
             
-            // Verificar si hay un chat seleccionado
-            console.log('🔍 Verificando chat para subir video. currentChatId:', currentChatId);
+            // Obtener el chat actual (con fallback al DOM)
+            const chatId = getCurrentChatId();
+            console.log('🔍 Verificando chat para subir video. chatId:', chatId, 'currentChatId:', currentChatId);
             
-            if (!currentChatId) {
-                console.warn('⚠️ No hay currentChatId, verificando elementos del DOM...');
-                // Intentar obtener el chat del header visible o del elemento activo
-                const chatHeader = document.getElementById('chatHeader');
-                const activeChatItem = document.querySelector('.chat-item.active');
-                
-                if (chatHeader && chatHeader.style.display !== 'none') {
-                    // Si el header está visible, intentar obtener el chat_id del elemento activo
-                    if (activeChatItem) {
-                        const chatIdFromDOM = activeChatItem.getAttribute('data-chat-id');
-                        if (chatIdFromDOM) {
-                            console.log('✅ Chat encontrado en DOM, estableciendo currentChatId:', chatIdFromDOM);
-                            currentChatId = chatIdFromDOM;
-                        } else {
-                            console.warn('⚠️ Elemento activo encontrado pero sin data-chat-id');
-                            alert('Selecciona un chat primero');
-                            return;
-                        }
-                    } else {
-                        console.warn('⚠️ Header visible pero no hay elemento activo');
-                        alert('Selecciona un chat primero');
-                        return;
-                    }
-                } else {
-                    console.warn('⚠️ No hay header visible ni chat seleccionado');
-                    alert('Selecciona un chat primero');
-                    return;
-                }
+            if (!chatId) {
+                alert('Selecciona un chat primero. Haz clic en un chat de la lista para seleccionarlo.');
+                return;
+            }
+            
+            // Asegurarse de que currentChatId esté actualizado
+            if (currentChatId !== chatId) {
+                currentChatId = chatId;
             }
             
             console.log('✅ Chat verificado, mostrando modal. currentChatId:', currentChatId);

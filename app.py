@@ -1414,7 +1414,7 @@ def get_video(video_id):
         if not mime_type:
             mime_type = 'video/mp4'
         
-        print(f"🎬 Sirviendo video con mime_type: {mime_type}")
+        print(f"🎬 Sirviendo video con mime_type: {mime_type}, video_id: {video_id}")
         
         # Si el video está pre-cargado en memoria, servirlo inmediatamente (como Telegram)
         if video_id in video_memory_cache:
@@ -1441,6 +1441,9 @@ def get_video(video_id):
                         'Content-Range': f'bytes {start}-{end}/{len(video_data)}',
                         'Content-Length': str(len(data)),
                         'Accept-Ranges': 'bytes',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                        'Access-Control-Allow-Headers': 'Range',
                     }
                     return Response(data, 206, headers, mimetype=mime_type)
                 except:
@@ -1451,6 +1454,9 @@ def get_video(video_id):
                 'Content-Type': mime_type,
                 'Content-Length': str(len(video_data)),
                 'Accept-Ranges': 'bytes',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                'Access-Control-Allow-Headers': 'Range',
             }
             return Response(video_data, 200, headers, mimetype=mime_type)
         
@@ -1491,6 +1497,9 @@ def get_video(video_id):
                             'Content-Range': f'bytes {start}-{end}/{len(video_data)}',
                             'Content-Length': str(len(data)),
                             'Accept-Ranges': 'bytes',
+                            'Access-Control-Allow-Origin': '*',
+                            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                            'Access-Control-Allow-Headers': 'Range',
                         }
                         return Response(data, 206, headers, mimetype=mime_type)
                     except:
@@ -1501,6 +1510,9 @@ def get_video(video_id):
                     'Content-Type': mime_type,
                     'Content-Length': str(len(video_data)),
                     'Accept-Ranges': 'bytes',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Range',
                 }
                 return Response(video_data, 200, headers, mimetype=mime_type)
             else:
@@ -1540,6 +1552,9 @@ def get_video(video_id):
                     'Content-Length': str(len(data)),
                     'Accept-Ranges': 'bytes',
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Range',
                 }
                 
                 print(f"📡 Sirviendo rango desde Telegram: {start}-{end}")
@@ -1552,7 +1567,10 @@ def get_video(video_id):
             'Content-Type': mime_type,
             'Accept-Ranges': 'bytes',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Transfer-Encoding': 'chunked'
+            'Transfer-Encoding': 'chunked',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range',
         }
         
         return Response(

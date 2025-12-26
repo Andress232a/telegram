@@ -846,45 +846,63 @@
                     const fullUrl = window.location.origin + watchUrl;
                     // ID único para el video
                     const videoId = `video-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    // Usar Video.js para mejor compatibilidad
+                    // Usar HTML5 nativo primero (siempre funciona)
                     content = `
                         <div class="message-video" oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')">
                             <video
                                 id="${videoId}"
-                                class="video-js vjs-default-skin"
                                 controls
                                 preload="metadata"
-                                style="max-width: 100%; border-radius: 8px; background: #000;"
-                                data-setup='{"fluid": true, "responsive": true}'
+                                style="max-width: 100%; border-radius: 8px; background: #000; width: 100%;"
                             >
                                 <source src="${msg.video_url}" type="video/mp4">
-                                <p class="vjs-no-js">
-                                    Para ver este video, por favor habilita JavaScript.
-                                </p>
+                                Tu navegador no soporta video HTML5.
                             </video>
                         </div>
                     `;
-                    // Inicializar Video.js después de que el DOM se actualice
+                    // Configurar el video después de que el DOM se actualice
                     setTimeout(() => {
                         const videoElement = document.getElementById(videoId);
-                        if (videoElement && !videojs.getPlayer(videoId)) {
-                            try {
-                                const player = videojs(videoId, {
-                                    fluid: true,
-                                    responsive: true,
-                                    playbackRates: [0.5, 1, 1.25, 1.5, 2],
-                                    html5: {
-                                        vhs: {
-                                            overrideNative: true
-                                        }
+                        if (videoElement) {
+                            // Configurar eventos de error
+                            videoElement.addEventListener('error', function(e) {
+                                const error = videoElement.error;
+                                console.error('Error en video:', videoId, error);
+                                if (error) {
+                                    let errorMsg = 'Error al cargar el video';
+                                    switch(error.code) {
+                                        case error.MEDIA_ERR_ABORTED:
+                                            errorMsg = 'Carga cancelada';
+                                            break;
+                                        case error.MEDIA_ERR_NETWORK:
+                                            errorMsg = 'Error de red';
+                                            break;
+                                        case error.MEDIA_ERR_DECODE:
+                                            errorMsg = 'Error de formato';
+                                            break;
+                                        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                                            errorMsg = 'Formato no soportado';
+                                            break;
                                     }
-                                });
-                                // Manejar errores silenciosamente para no interrumpir la experiencia
-                                player.on('error', function() {
-                                    console.warn('Error en video:', videoId, player.error());
-                                });
-                            } catch (e) {
-                                console.warn('Error inicializando Video.js:', e);
+                                    console.error('Error de video:', errorMsg, 'URL:', msg.video_url);
+                                }
+                            });
+                            
+                            // Intentar mejorar con Video.js si está disponible (opcional)
+                            if (typeof videojs !== 'undefined') {
+                                try {
+                                    videoElement.className = 'video-js vjs-default-skin';
+                                    const player = videojs(videoId, {
+                                        fluid: true,
+                                        responsive: true,
+                                        playbackRates: [0.5, 1, 1.25, 1.5, 2]
+                                    });
+                                    player.on('error', function() {
+                                        console.warn('Error en Video.js:', videoId, player.error());
+                                    });
+                                } catch (e) {
+                                    console.warn('Error inicializando Video.js:', e);
+                                }
                             }
                         }
                     }, 100);

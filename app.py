@@ -1433,116 +1433,18 @@ def get_video(video_id):
         if not mime_type:
             mime_type = 'video/mp4'
         
-        print(f"🎬 Sirviendo video con mime_type: {mime_type}, video_id: {video_id}")
+        print(f"🎬 Streaming video: {mime_type}, tamaño: {file_size} bytes, video_id: {video_id}")
         
-        # Si el video está pre-cargado en memoria, servirlo inmediatamente (como Telegram)
-        if video_id in video_memory_cache:
-            print(f"⚡ Video en memoria (pre-cargado), sirviendo instantáneamente: {video_id}")
-            video_data = video_memory_cache[video_id]
-            
-            # Si hay range request, servir solo el rango
-            if range_header:
-                try:
-                    range_match = range_header.replace('bytes=', '').split('-')
-                    start = int(range_match[0]) if range_match[0] else 0
-                    end = int(range_match[1]) if range_match[1] else len(video_data) - 1
-                    
-                    if start < 0:
-                        start = 0
-                    if end >= len(video_data):
-                        end = len(video_data) - 1
-                    if start > end:
-                        start = end
-                    
-                    data = video_data[start:end+1]
-                    headers = {
-                        'Content-Type': mime_type,
-                        'Content-Range': f'bytes {start}-{end}/{len(video_data)}',
-                        'Content-Length': str(len(data)),
-                        'Accept-Ranges': 'bytes',
-                        'Access-Control-Allow-Origin': '*',
-                        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                        'Access-Control-Allow-Headers': 'Range',
-                    }
-                    return Response(data, 206, headers, mimetype=mime_type)
-                except:
-                    pass
-            
-            # Servir completo desde memoria
-            headers = {
-                'Content-Type': mime_type,
-                'Content-Length': str(len(video_data)),
-                'Accept-Ranges': 'bytes',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                'Access-Control-Allow-Headers': 'Range',
-            }
-            return Response(video_data, 200, headers, mimetype=mime_type)
+        # Headers base para todas las respuestas
+        base_headers = {
+            'Content-Type': mime_type,
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range',
+        }
         
-        # Si no está en memoria, descargar y servir (y guardar en memoria para próximas veces)
-        print(f"☁️ Descargando desde la nube de Telegram: {video_id}")
-        
-        async def download_to_memory():
-            buffer = BytesIO()
-            await client.download_media(messages, buffer)
-            buffer.seek(0)
-            return buffer.getvalue()
-        
-        try:
-            video_data = run_async(download_to_memory(), client_loop, timeout=600)
-            
-            if video_data:
-                # Guardar en memoria para próximas solicitudes (como Telegram)
-                video_memory_cache[video_id] = video_data
-                print(f"✅ Video descargado y guardado en memoria: {video_id} ({len(video_data)} bytes)")
-                
-                # Si hay range request, servir solo el rango
-                if range_header:
-                    try:
-                        range_match = range_header.replace('bytes=', '').split('-')
-                        start = int(range_match[0]) if range_match[0] else 0
-                        end = int(range_match[1]) if range_match[1] else len(video_data) - 1
-                        
-                        if start < 0:
-                            start = 0
-                        if end >= len(video_data):
-                            end = len(video_data) - 1
-                        if start > end:
-                            start = end
-                        
-                        data = video_data[start:end+1]
-                        headers = {
-                            'Content-Type': mime_type,
-                            'Content-Range': f'bytes {start}-{end}/{len(video_data)}',
-                            'Content-Length': str(len(data)),
-                            'Accept-Ranges': 'bytes',
-                            'Access-Control-Allow-Origin': '*',
-                            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                            'Access-Control-Allow-Headers': 'Range',
-                        }
-                        return Response(data, 206, headers, mimetype=mime_type)
-                    except:
-                        pass
-                
-                # Servir completo desde memoria
-                headers = {
-                    'Content-Type': mime_type,
-                    'Content-Length': str(len(video_data)),
-                    'Accept-Ranges': 'bytes',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Range',
-                }
-                return Response(video_data, 200, headers, mimetype=mime_type)
-            else:
-                return jsonify({'error': 'No se pudo descargar el video'}), 500
-        except Exception as e:
-            import traceback
-            print(f"❌ Error descargando video: {e}")
-            print(traceback.format_exc())
-            return jsonify({'error': str(e)}), 500
-        
-        # Si hay range request, manejar de forma especial
+        # Si hay range request, servir solo ese rango (streaming progresivo)
         if range_header:
             try:
                 range_match = range_header.replace('bytes=', '').split('-')
@@ -1556,48 +1458,71 @@ def get_video(video_id):
                 if start > end:
                     start = end
                 
-                # Para range requests, descargar completo pero servir solo el rango
+                chunk_size = end - start + 1
+                
+                # Descargar solo el rango solicitado
                 async def download_range():
                     buffer = BytesIO()
                     await client.download_media(messages, buffer)
                     buffer.seek(start)
-                    return buffer.read(end - start + 1)
+                    return buffer.read(chunk_size)
                 
-                data = run_async(download_range(), client_loop, timeout=300)
+                # Timeout dinámico
+                timeout_seconds = min(300, max(30, int(chunk_size / (1024 * 1024)) * 2))
                 
-                headers = {
-                    'Content-Type': mime_type,
-                    'Content-Range': f'bytes {start}-{end}/{file_size}',
-                    'Content-Length': str(len(data)),
-                    'Accept-Ranges': 'bytes',
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Range',
-                }
+                chunk_data = run_async(download_range(), client_loop, timeout=timeout_seconds)
                 
-                print(f"📡 Sirviendo rango desde Telegram: {start}-{end}")
-                return Response(data, 206, headers, mimetype=mime_type)
+                if chunk_data and len(chunk_data) > 0:
+                    headers = {
+                        **base_headers,
+                        'Content-Range': f'bytes {start}-{start+len(chunk_data)-1}/{file_size}',
+                        'Content-Length': str(len(chunk_data)),
+                    }
+                    return Response(chunk_data, 206, headers, mimetype=mime_type)
+                else:
+                    return jsonify({'error': 'No se pudo descargar el rango del video'}), 500
+                    
             except Exception as e:
                 print(f"⚠️ Error con range request: {e}")
+                import traceback
+                print(traceback.format_exc())
+                return jsonify({'error': str(e)}), 500
         
-        # Streaming completo desde Telegram (sin guardar nada)
-        headers = {
-            'Content-Type': mime_type,
-            'Accept-Ranges': 'bytes',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Transfer-Encoding': 'chunked',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Range',
-        }
+        # Si no hay range request, servir los primeros bytes para metadata
+        # El navegador luego hará range requests para el resto
+        print(f"📥 Solicitud inicial, sirviendo primeros bytes para metadata...")
         
-        return Response(
-            stream_from_telegram(),
-            headers=headers,
-            mimetype=mime_type,
-            direct_passthrough=True
-        )
+        async def download_initial_chunk():
+            buffer = BytesIO()
+            # Descargar solo los primeros 2MB para metadata (suficiente para la mayoría de videos)
+            initial_size = min(2 * 1024 * 1024, file_size)
+            await client.download_media(messages, buffer)
+            buffer.seek(0)
+            initial_data = buffer.read(initial_size)
+            return initial_data
+        
+        try:
+            initial_data = run_async(download_initial_chunk(), client_loop, timeout=60)
+            
+            if initial_data:
+                headers = {
+                    **base_headers,
+                    'Content-Length': str(file_size),
+                    'Content-Range': f'bytes 0-{len(initial_data)-1}/{file_size}',
+                }
+                # Si el archivo es pequeño, servir completo
+                if len(initial_data) >= file_size:
+                    return Response(initial_data, 200, headers, mimetype=mime_type)
+                else:
+                    # Servir solo los primeros bytes, el navegador hará range requests
+                    return Response(initial_data, 206, headers, mimetype=mime_type)
+            else:
+                return jsonify({'error': 'No se pudo obtener el video'}), 500
+        except Exception as e:
+            import traceback
+            print(f"❌ Error descargando chunk inicial: {e}")
+            print(traceback.format_exc())
+            return jsonify({'error': str(e)}), 500
             
     except Exception as e:
         import traceback

@@ -839,96 +839,84 @@
                 const isOwn = msg.from_id === null || msg.from_id === 'None';
                 
                 let content = '';
-                // Si tiene video, mostrar miniatura pequeña (como Telegram)
+                // Si tiene video, mostrar video reproduciéndose (como Telegram)
                 if (msg.video_url) {
-                    console.log('🎬 Renderizando video miniatura:', msg.video_url);
+                    console.log('🎬 Renderizando video:', msg.video_url);
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
-                    const videoId = `video-thumb-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    // Miniatura con video visible (estilo Telegram)
+                    const videoId = `video-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    // Video reproduciéndose automáticamente (estilo Telegram)
                     content = `
-                        <div class="message-video-thumbnail" 
-                             onclick="window.open('${watchUrl}', '_blank')"
+                        <div class="message-video-container" 
                              oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')"
                              style="
                                  position: relative;
-                                 width: 320px;
-                                 height: 180px;
-                                 max-width: 100%;
+                                 width: 100%;
+                                 max-width: 400px;
                                  border-radius: 12px;
-                                 background: #1a1a1a;
-                                 cursor: pointer;
                                  overflow: hidden;
-                                 display: flex;
-                                 align-items: center;
-                                 justify-content: center;
-                                 transition: transform 0.2s, opacity 0.2s;
-                                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+                                 background: #000;
+                                 margin: 8px 0;
                              "
-                             onmouseover="this.style.transform='scale(1.02)'; this.style.opacity='0.9'"
-                             onmouseout="this.style.transform='scale(1)'; this.style.opacity='1'"
                         >
                             <video
                                 id="${videoId}"
-                                preload="metadata"
+                                controls
+                                autoplay
                                 muted
+                                loop
                                 playsinline
+                                preload="auto"
                                 style="
                                     width: 100%;
-                                    height: 100%;
-                                    object-fit: cover;
+                                    height: auto;
                                     display: block;
+                                    max-height: 500px;
                                 "
                             >
                                 <source src="${msg.video_url}" type="video/mp4">
+                                Tu navegador no soporta video HTML5.
                             </video>
                             <div style="
                                 position: absolute;
-                                top: 0;
-                                left: 0;
-                                right: 0;
-                                bottom: 0;
-                                background: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.3) 100%);
+                                bottom: 8px;
+                                right: 8px;
+                                background: rgba(0, 0, 0, 0.6);
+                                color: white;
+                                padding: 4px 8px;
+                                border-radius: 4px;
+                                font-size: 11px;
                                 pointer-events: none;
-                            "></div>
-                            <div style="
-                                position: absolute;
-                                width: 56px;
-                                height: 56px;
-                                border-radius: 50%;
-                                background: rgba(0, 0, 0, 0.7);
-                                display: flex;
-                                align-items: center;
-                                justify-content: center;
-                                pointer-events: none;
-                                backdrop-filter: blur(4px);
-                            ">
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="white" style="margin-left: 3px;">
-                                    <path d="M8 5v14l11-7z"/>
-                                </svg>
-                            </div>
+                                display: none;
+                            ">🎬</div>
                         </div>
                     `;
-                    // Configurar el video para que muestre el primer frame
+                    // Configurar el video después de que se renderice
                     setTimeout(() => {
                         const videoEl = document.getElementById(videoId);
                         if (videoEl) {
-                            // Cargar el primer frame del video
-                            videoEl.addEventListener('loadedmetadata', function() {
-                                videoEl.currentTime = 0.1; // Ir al primer frame
+                            // Asegurar que se reproduzca automáticamente
+                            videoEl.addEventListener('loadeddata', function() {
+                                videoEl.play().catch(e => {
+                                    console.log('Autoplay bloqueado, pero el video está listo:', e);
+                                });
                             });
-                            videoEl.addEventListener('seeked', function() {
-                                // Una vez que se carga el frame, pausar
-                                videoEl.pause();
+                            
+                            // Manejar errores
+                            videoEl.addEventListener('error', function(e) {
+                                console.error('Error en video:', videoId, videoEl.error);
                             });
-                            // Intentar cargar el primer frame
-                            videoEl.load();
+                            
+                            // Intentar reproducir automáticamente
+                            videoEl.play().catch(e => {
+                                console.log('Autoplay inicial bloqueado:', e);
+                            });
                         }
                     }, 100);
                     // Si también tiene texto (caption), mostrarlo debajo del video
                     if (msg.text && msg.text.trim()) {
-                        content += `<div class="message-caption" style="margin-top: 10px; font-size: 0.9em; opacity: 0.85; line-height: 1.4;">${msg.text}</div>`;
+                        content += `<div class="message-caption" style="margin-top: 8px; font-size: 0.9em; opacity: 0.85; line-height: 1.4;">${msg.text}</div>`;
                     }
                 } else if (msg.text) {
                     // Si no tiene video, mostrar solo el texto

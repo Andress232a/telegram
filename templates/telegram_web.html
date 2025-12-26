@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Web - Contenedor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0e1621;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: #17212b;
+            padding: 15px 20px;
+            border-bottom: 1px solid #242f3d;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 1000;
+        }
+        
+        .header h1 {
+            color: #e4e6eb;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            background: #2b5278;
+            border: none;
+            color: #e4e6eb;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: #3d6a99;
+        }
+        
+        .btn-secondary {
+            background: #242f3d;
+        }
+        
+        .btn-secondary:hover {
+            background: #2b3542;
+        }
+        
+        .telegram-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        
+        .video-link-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        
+        .video-link-modal {
+            background: #17212b;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 90%;
+            border: 1px solid #242f3d;
+        }
+        
+        .video-link-modal h3 {
+            color: #e4e6eb;
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+        
+        .video-link-input {
+            width: 100%;
+            padding: 12px;
+            background: #242f3d;
+            border: 1px solid #2b3542;
+            border-radius: 8px;
+            color: #e4e6eb;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        
+        .video-link-input:focus {
+            outline: none;
+            border-color: #2b5278;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #2b5278;
+            color: #e4e6eb;
+            padding: 15px 20px;
+            border-radius: 8px;
+            display: none;
+            z-index: 10001;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .notification.show {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Telegram Web - Contenedor</h1>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="showVideoLinkModal()">Copiar Link de Video</button>
+            <button class="btn btn-secondary" onclick="logout()">Cerrar Sesión</button>
+        </div>
+    </div>
+    
+    <div class="telegram-container">
+        <iframe id="telegramFrame" src="https://web.telegram.org/k/" allow="microphone; camera"></iframe>
+    </div>
+    
+    <!-- Modal para copiar link de video -->
+    <div class="video-link-overlay" id="videoLinkOverlay" onclick="closeVideoLinkModal(event)">
+        <div class="video-link-modal" onclick="event.stopPropagation()">
+            <h3>Copiar Link de Video</h3>
+            <input type="text" class="video-link-input" id="videoLinkInput" placeholder="Pega el link del video aquí o ingresa chat_id y message_id" readonly>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeVideoLinkModal()">Cerrar</button>
+                <button class="btn" onclick="copyVideoLink()">Copiar Link</button>
+                <button class="btn" onclick="generateVideoLink()">Generar Link</button>
+            </div>
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #242f3d;">
+                <p style="color: #8e9297; font-size: 12px; margin-bottom: 10px;">O ingresa manualmente:</p>
+                <input type="text" class="video-link-input" id="chatIdInput" placeholder="Chat ID (ej: me o -1001234567890)" style="margin-bottom: 10px;">
+                <input type="number" class="video-link-input" id="messageIdInput" placeholder="Message ID (ej: 123)">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Notificación -->
+    <div class="notification" id="notification"></div>
+    
+    <script>
+        let currentVideoLink = null;
+        
+        // Interceptar mensajes del iframe (si es posible)
+        window.addEventListener('message', function(event) {
+            // Telegram Web puede enviar mensajes, pero por seguridad no podemos acceder a su contenido
+            console.log('Mensaje recibido de Telegram Web:', event.origin);
+        });
+        
+        function showVideoLinkModal() {
+            document.getElementById('videoLinkOverlay').style.display = 'flex';
+            // Intentar obtener el link del video desde el iframe (limitado por CORS)
+            // Por ahora, el usuario debe ingresar manualmente
+        }
+        
+        function closeVideoLinkModal(event) {
+            if (!event || event.target.id === 'videoLinkOverlay') {
+                document.getElementById('videoLinkOverlay').style.display = 'none';
+            }
+        }
+        
+        function generateVideoLink() {
+            const chatId = document.getElementById('chatIdInput').value.trim();
+            const messageId = document.getElementById('messageIdInput').value.trim();
+            
+            if (!chatId || !messageId) {
+                showNotification('Por favor ingresa Chat ID y Message ID', 'error');
+                return;
+            }
+            
+            // Llamar a la API para obtener o crear el video_id
+            fetch('/api/get_video_link', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: parseInt(messageId)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.video_url) {
+                    const fullUrl = window.location.origin + data.video_url;
+                    document.getElementById('videoLinkInput').value = fullUrl;
+                    currentVideoLink = fullUrl;
+                    showNotification('Link generado exitosamente', 'success');
+                } else {
+                    showNotification(data.error || 'Error al generar el link', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showNotification('Error al generar el link', 'error');
+            });
+        }
+        
+        function copyVideoLink() {
+            const link = document.getElementById('videoLinkInput').value;
+            if (!link) {
+                showNotification('No hay link para copiar', 'error');
+                return;
+            }
+            
+            navigator.clipboard.writeText(link).then(() => {
+                showNotification('Link copiado al portapapeles', 'success');
+            }).catch(err => {
+                // Fallback para navegadores antiguos
+                const textArea = document.createElement('textarea');
+                textArea.value = link;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showNotification('Link copiado al portapapeles', 'success');
+            });
+        }
+        
+        function showNotification(message, type = 'success') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification show';
+            if (type === 'error') {
+                notification.style.background = '#c53030';
+            } else {
+                notification.style.background = '#2b5278';
+            }
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+        
+        function logout() {
+            if (confirm('¿Estás seguro de que quieres cerrar sesión?')) {
+                fetch('/api/logout', {
+                    method: 'POST'
+                })
+                .then(() => {
+                    window.location.href = '/';
+                });
+            }
+        }
+        
+        // Cerrar modal con ESC
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.getElementById('videoLinkOverlay').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
+

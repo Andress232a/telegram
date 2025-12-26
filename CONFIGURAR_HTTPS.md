@@ -125,3 +125,5 @@ tail -f /var/log/letsencrypt/letsencrypt.log
 3. **Seguridad:** Nunca compartas tus claves privadas
 4. **DNS:** Asegúrate de que tu dominio apunte correctamente al servidor antes de obtener el certificado
 
+
+

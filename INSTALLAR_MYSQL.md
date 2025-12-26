@@ -159,3 +159,5 @@ mysql -u telegram_user -p telegram_app < backup_20241222.sql
 3. **Solo permite conexiones desde localhost** (ya está configurado así)
 4. **Haz backups regulares** de la base de datos
 
+
+

@@ -622,6 +622,110 @@ def home():
     
     return render_template('home.html')
 
+@app.route('/telegram-web')
+def telegram_web():
+    """Página con Telegram Web embebido (como contenedor)"""
+    if 'phone' not in session:
+        return redirect(url_for('index'))
+    return render_template('telegram_web.html')
+
+@app.route('/api/get_video_link', methods=['POST'])
+def get_video_link():
+    """Obtener o crear link de video desde chat_id y message_id"""
+    if 'phone' not in session:
+        return jsonify({'error': 'No estás conectado'}), 401
+    
+    data = request.get_json()
+    chat_id = data.get('chat_id')
+    message_id = data.get('message_id')
+    
+    if not chat_id or not message_id:
+        return jsonify({'error': 'chat_id y message_id son requeridos'}), 400
+    
+    phone = session['phone']
+    
+    try:
+        # Buscar si ya existe un video_id para este mensaje
+        existing_video = find_video_by_message(chat_id, message_id, phone)
+        
+        if existing_video:
+            video_id = existing_video['video_id']
+            video_url = f'/watch/{video_id}'
+            return jsonify({
+                'video_id': video_id,
+                'video_url': video_url,
+                'watch_url': video_url
+            })
+        
+        # Si no existe, crear uno nuevo obteniendo el mensaje
+        client = get_or_create_client(phone)
+        client_loop = client._loop
+        
+        async def get_message_info():
+            target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+            message = await client.get_messages(target_chat, ids=message_id)
+            return message
+        
+        try:
+            message = run_async(get_message_info(), client_loop, timeout=30)
+            
+            if not message or not message.media:
+                return jsonify({'error': 'Mensaje no encontrado o no tiene media'}), 404
+            
+            # Verificar que sea video
+            is_video = False
+            if hasattr(message.media, 'document'):
+                doc = message.media.document
+                if hasattr(doc, 'mime_type') and doc.mime_type and doc.mime_type.startswith('video/'):
+                    is_video = True
+                elif hasattr(doc, 'attributes'):
+                    for attr in doc.attributes:
+                        if isinstance(attr, DocumentAttributeVideo):
+                            is_video = True
+                            break
+            
+            if not is_video:
+                return jsonify({'error': 'El mensaje no contiene un video'}), 400
+            
+            # Crear nuevo video_id
+            video_id = secrets.token_urlsafe(16)
+            chat_id_str = str(chat_id) if chat_id != 'me' else 'me'
+            filename = 'video'
+            if hasattr(message.media, 'document') and hasattr(message.media.document, 'attributes'):
+                for attr in message.media.document.attributes:
+                    if hasattr(attr, 'file_name') and attr.file_name:
+                        filename = attr.file_name
+                        break
+            
+            file_size = None
+            if hasattr(message.media, 'document'):
+                file_size = message.media.document.size
+            
+            timestamp = int(time.time())
+            
+            # Guardar en base de datos
+            if save_video_to_db(video_id, chat_id_str, message_id, filename, timestamp, file_size):
+                video_url = f'/watch/{video_id}'
+                return jsonify({
+                    'video_id': video_id,
+                    'video_url': video_url,
+                    'watch_url': video_url
+                })
+            else:
+                return jsonify({'error': 'Error al guardar el video'}), 500
+                
+        except Exception as e:
+            print(f"❌ Error obteniendo mensaje: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({'error': str(e)}), 500
+            
+    except Exception as e:
+        print(f"❌ Error en get_video_link: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/upload')
 def upload_page():
     """Página de subida de videos (redirigir a home)"""
@@ -1558,8 +1662,12 @@ def get_video(video_id):
         
         async def download_initial_chunk():
             buffer = BytesIO()
-            # Descargar solo los primeros 2MB para metadata (suficiente para la mayoría de videos)
-            initial_size = min(2 * 1024 * 1024, file_size)
+            # Para la solicitud inicial, descargar solo los primeros bytes necesarios para metadata
+            # Telegram Web usa aproximadamente 512KB-1MB para metadata
+            initial_size = min(1024 * 1024, file_size)  # 1MB es suficiente para metadata de la mayoría de videos
+            
+            # Usar download_media que descarga completo, pero solo leeremos los primeros bytes
+            # En el futuro, si Telethon soporta descarga parcial, optimizar aquí
             await client.download_media(messages, buffer)
             buffer.seek(0)
             initial_data = buffer.read(initial_size)

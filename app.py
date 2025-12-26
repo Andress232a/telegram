@@ -1382,7 +1382,7 @@ def upload_video():
     import threading
     upload_thread = threading.Thread(
         target=upload_in_background, 
-        args=(phone, chat_id, local_path, filename, upload_id, timestamp, file_size),
+        args=(phone, chat_id, local_path, filename, upload_id, timestamp, file_size, description),
         daemon=True
     )
     upload_thread.start()

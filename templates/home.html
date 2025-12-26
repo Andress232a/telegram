@@ -1322,39 +1322,64 @@
         
         // Función para obtener el chat actualmente seleccionado
         function getCurrentChatId() {
+            console.log('🔍 getCurrentChatId: currentChatId variable =', currentChatId);
+            
             // Primero intentar desde la variable
             if (currentChatId) {
+                console.log('✅ Usando currentChatId de variable:', currentChatId);
                 return currentChatId;
             }
             
-            // Si no está en la variable, intentar desde el DOM
+            // Si no está en la variable, intentar desde el DOM - buscar elemento activo
             const activeChatItem = document.querySelector('.chat-item.active');
+            console.log('🔍 Buscando elemento activo:', activeChatItem);
+            
             if (activeChatItem) {
                 const chatIdFromDOM = activeChatItem.getAttribute('data-chat-id');
+                console.log('🔍 data-chat-id del elemento activo:', chatIdFromDOM);
+                
                 if (chatIdFromDOM) {
-                    console.log('✅ Chat encontrado en DOM, actualizando currentChatId:', chatIdFromDOM);
+                    console.log('✅ Chat encontrado en DOM (elemento activo), actualizando currentChatId:', chatIdFromDOM);
                     currentChatId = chatIdFromDOM;
                     return chatIdFromDOM;
+                } else {
+                    console.warn('⚠️ Elemento activo encontrado pero sin data-chat-id');
                 }
             }
             
             // Verificar si el header está visible (indica que hay un chat seleccionado)
             const chatHeader = document.getElementById('chatHeader');
-            if (chatHeader && chatHeader.style.display !== 'none') {
-                // Si el header está visible pero no hay elemento activo, buscar el último chat seleccionado
-                const allChatItems = document.querySelectorAll('.chat-item[data-chat-id]');
-                if (allChatItems.length > 0) {
-                    // Intentar obtener el chat_id del header o del primer chat
-                    const headerName = document.getElementById('chatHeaderName');
-                    if (headerName && headerName.textContent) {
-                        // Buscar el chat por nombre
-                        for (let item of allChatItems) {
-                            const chatName = item.querySelector('.chat-name')?.textContent;
-                            if (chatName && chatName.trim() === headerName.textContent.trim()) {
+            const isHeaderVisible = chatHeader && chatHeader.style.display !== 'none';
+            console.log('🔍 Header visible:', isHeaderVisible);
+            
+            if (isHeaderVisible) {
+                const headerName = document.getElementById('chatHeaderName');
+                const headerText = headerName ? headerName.textContent.trim() : '';
+                console.log('🔍 Nombre en header:', headerText);
+                
+                if (headerText) {
+                    // Buscar el chat por nombre en todos los elementos
+                    const allChatItems = document.querySelectorAll('.chat-item[data-chat-id]');
+                    console.log('🔍 Total de chats encontrados:', allChatItems.length);
+                    
+                    for (let item of allChatItems) {
+                        const chatNameElement = item.querySelector('.chat-name');
+                        if (chatNameElement) {
+                            // Obtener solo el texto, sin los badges ni otros elementos
+                            const chatName = chatNameElement.textContent.trim();
+                            // Limpiar el nombre de posibles badges o verificaciones
+                            const cleanChatName = chatName.replace(/✓/g, '').replace(/\s+/g, ' ').trim();
+                            const cleanHeaderName = headerText.replace(/✓/g, '').replace(/\s+/g, ' ').trim();
+                            
+                            console.log('🔍 Comparando:', cleanChatName, 'con', cleanHeaderName);
+                            
+                            if (cleanChatName === cleanHeaderName || chatName.includes(headerText) || headerText.includes(chatName)) {
                                 const chatId = item.getAttribute('data-chat-id');
                                 if (chatId) {
                                     console.log('✅ Chat encontrado por nombre, actualizando currentChatId:', chatId);
                                     currentChatId = chatId;
+                                    // También marcar como activo
+                                    item.classList.add('active');
                                     return chatId;
                                 }
                             }
@@ -1363,6 +1388,7 @@
                 }
             }
             
+            console.warn('⚠️ No se pudo encontrar el chat seleccionado');
             return null;
         }
         

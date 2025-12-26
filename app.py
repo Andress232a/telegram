@@ -1207,6 +1207,7 @@ def upload_video():
         return jsonify({'error': 'No estás conectado a Telegram'}), 401
     
     chat_id = request.form.get('chat_id', 'me')  # Por defecto a "me" (Saved Messages)
+    description = request.form.get('description', '')  # Descripción opcional del video
     
     if 'video' not in request.files:
         return jsonify({'error': 'No se encontró el archivo de video'}), 400
@@ -1237,7 +1238,7 @@ def upload_video():
     
     # Devolver upload_id INMEDIATAMENTE para que el frontend pueda monitorear
     # La subida se ejecutará en segundo plano
-    def upload_in_background(phone_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param):
+    def upload_in_background(phone_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
             # Asegurarse de que el upload_id existe ANTES de comenzar la subida
             if upload_id_param not in upload_progress:
@@ -1289,11 +1290,14 @@ def upload_video():
             
             # Subir video al chat especificado desde el archivo local
             async def upload():
+                # Usar la descripción si está disponible, sino usar el nombre del archivo
+                caption = description_param if description_param else filename_param
+                
                 # Enviar el archivo desde el path local
                 message = await client.send_file(
                     int(chat_id_param) if chat_id_param != 'me' else 'me', 
                     local_path_param, 
-                    caption=filename_param,
+                    caption=caption,
                     progress_callback=progress_callback
                 )
                 return message

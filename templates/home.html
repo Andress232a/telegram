@@ -470,6 +470,148 @@
             display: block;
         }
         
+        /* Modal para subir video con descripción */
+        .video-upload-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        
+        .video-upload-modal-content {
+            background: #17212b;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        
+        .video-upload-modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #242f3d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .video-upload-modal-header h3 {
+            margin: 0;
+            color: #e4e6eb;
+            font-size: 18px;
+        }
+        
+        .video-upload-modal-close {
+            background: none;
+            border: none;
+            color: #e4e6eb;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+        
+        .video-upload-modal-close:hover {
+            background: #242f3d;
+        }
+        
+        .video-upload-modal-body {
+            padding: 20px;
+        }
+        
+        .video-upload-info {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #242f3d;
+            border-radius: 8px;
+            color: #e4e6eb;
+            font-size: 14px;
+        }
+        
+        .video-upload-modal-body label {
+            display: block;
+            margin-bottom: 8px;
+            color: #e4e6eb;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .video-description-input {
+            width: 100%;
+            padding: 12px;
+            background: #242f3d;
+            border: 1px solid #2b3542;
+            border-radius: 8px;
+            color: #e4e6eb;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 80px;
+            box-sizing: border-box;
+        }
+        
+        .video-description-input:focus {
+            outline: none;
+            border-color: #2b5278;
+            background: #2b3542;
+        }
+        
+        .video-upload-modal-footer {
+            padding: 20px;
+            border-top: 1px solid #242f3d;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        .video-upload-cancel-btn,
+        .video-upload-submit-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .video-upload-cancel-btn {
+            background: #242f3d;
+            color: #e4e6eb;
+        }
+        
+        .video-upload-cancel-btn:hover {
+            background: #2b3542;
+        }
+        
+        .video-upload-submit-btn {
+            background: #2b5278;
+            color: #e4e6eb;
+        }
+        
+        .video-upload-submit-btn:hover {
+            background: #3a6a9a;
+        }
+        
+        .video-upload-submit-btn:disabled {
+            background: #242f3d;
+            color: #6b7280;
+            cursor: not-allowed;
+        }
+        
         .upload-progress-title {
             color: #e4e6eb;
             font-weight: 600;
@@ -569,6 +711,30 @@
         </div>
         
         <button class="upload-video-btn" id="uploadVideoBtn" title="Subir video" style="display: none;">📹</button>
+        
+        <!-- Modal para agregar descripción al video -->
+        <div class="video-upload-modal" id="videoUploadModal" style="display: none;">
+            <div class="video-upload-modal-content">
+                <div class="video-upload-modal-header">
+                    <h3>Subir video</h3>
+                    <button class="video-upload-modal-close" onclick="closeVideoUploadModal()">✕</button>
+                </div>
+                <div class="video-upload-modal-body">
+                    <div class="video-upload-info" id="videoUploadInfo"></div>
+                    <label for="videoDescription">Descripción (opcional):</label>
+                    <textarea 
+                        id="videoDescription" 
+                        class="video-description-input" 
+                        placeholder="Escribe una descripción para el video..."
+                        rows="4"
+                    ></textarea>
+                </div>
+                <div class="video-upload-modal-footer">
+                    <button class="video-upload-cancel-btn" onclick="closeVideoUploadModal()">Cancelar</button>
+                    <button class="video-upload-submit-btn" id="videoUploadSubmitBtn" onclick="confirmVideoUpload()">Subir video</button>
+                </div>
+            </div>
+        </div>
         
         <div class="upload-progress-container" id="uploadProgress">
             <button class="upload-progress-close" onclick="closeUploadProgress()">✕</button>
@@ -1145,8 +1311,59 @@
             }, 100); // Verificar cada 100ms para actualización muy fluida
         }
         
+        // Variable para almacenar el archivo seleccionado
+        let selectedVideoFile = null;
+        
+        // Función para mostrar el modal de subida de video
+        function showVideoUploadModal(file) {
+            if (!file || !currentChatId) {
+                alert('Selecciona un chat primero');
+                return;
+            }
+            
+            selectedVideoFile = file;
+            
+            // Mostrar información del archivo
+            const fileSize = (file.size / (1024 * 1024)).toFixed(2);
+            document.getElementById('videoUploadInfo').innerHTML = `
+                <strong>📹 ${file.name}</strong><br>
+                <small>Tamaño: ${fileSize} MB</small>
+            `;
+            
+            // Limpiar el campo de descripción
+            document.getElementById('videoDescription').value = '';
+            
+            // Mostrar el modal
+            document.getElementById('videoUploadModal').style.display = 'flex';
+        }
+        
+        // Función para cerrar el modal
+        function closeVideoUploadModal() {
+            document.getElementById('videoUploadModal').style.display = 'none';
+            selectedVideoFile = null;
+            // Limpiar el input de video
+            document.getElementById('videoInput').value = '';
+        }
+        
+        // Función para confirmar y subir el video
+        async function confirmVideoUpload() {
+            if (!selectedVideoFile || !currentChatId) {
+                alert('Error: No hay archivo seleccionado');
+                return;
+            }
+            
+            // Cerrar el modal
+            closeVideoUploadModal();
+            
+            // Obtener la descripción
+            const description = document.getElementById('videoDescription').value.trim();
+            
+            // Subir el video
+            await uploadVideo(selectedVideoFile, description);
+        }
+        
         // Función para subir video
-        async function uploadVideo(file) {
+        async function uploadVideo(file, description = '') {
             if (!file || !currentChatId) {
                 alert('Selecciona un chat primero');
                 return;
@@ -1159,6 +1376,9 @@
             const formData = new FormData();
             formData.append('video', file);
             formData.append('chat_id', currentChatId);
+            if (description) {
+                formData.append('description', description);
+            }
             
             try {
                 const response = await fetch('/api/upload', {
@@ -1194,8 +1414,7 @@
         document.getElementById('videoInput').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (file) {
-                await uploadVideo(file);
-                e.target.value = '';
+                showVideoUploadModal(file);
             }
         });
         

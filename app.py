@@ -869,7 +869,15 @@ def get_or_create_client(phone):
     
     # Conectar si no está conectado
     if not client.is_connected():
-        run_async(client.connect())
+        try:
+            run_async(client.connect(), loop, timeout=10)
+            if not client.is_connected():
+                print(f"⚠️ Cliente creado pero no conectado después de connect()")
+        except Exception as e:
+            print(f"❌ Error conectando cliente en get_or_create_client: {e}")
+            import traceback
+            print(traceback.format_exc())
+            raise
     
     # Guardar en telegram_clients
     if phone not in telegram_clients:
@@ -1360,8 +1368,33 @@ def get_video(video_id):
                 return jsonify({'error': 'Sesión no disponible'}), 401
         
         # Obtener cliente de Telegram
-        client = get_or_create_client(phone)
-        client_loop = client._loop
+        try:
+            client = get_or_create_client(phone)
+            if not client:
+                print(f"❌ No se pudo obtener cliente de Telegram para {phone}")
+                return jsonify({'error': 'No se pudo conectar a Telegram'}), 500
+            
+            # Verificar que el cliente esté conectado
+            if not client.is_connected():
+                print(f"⚠️ Cliente no conectado, intentando conectar...")
+                try:
+                    run_async(client.connect(), client._loop, timeout=10)
+                    if not client.is_connected():
+                        print(f"❌ No se pudo conectar el cliente de Telegram")
+                        return jsonify({'error': 'No se pudo conectar a Telegram'}), 500
+                except Exception as e:
+                    print(f"❌ Error conectando cliente: {e}")
+                    return jsonify({'error': f'Error de conexión: {str(e)}'}), 500
+            
+            client_loop = client._loop
+            if not client_loop:
+                print(f"❌ No se pudo obtener el loop del cliente")
+                return jsonify({'error': 'Error interno del cliente'}), 500
+        except Exception as e:
+            print(f"❌ Error obteniendo cliente: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({'error': f'Error obteniendo cliente: {str(e)}'}), 500
         
         # Obtener información del mensaje y el archivo
         async def get_video_info():

@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Telegram - Gestor</title>
+    <!-- Video.js CSS -->
+    <link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
     <style>
         * {
             margin: 0;
@@ -298,11 +300,17 @@
             position: relative;
         }
         
-        .message-video video {
+        .message-video video,
+        .message-video .video-js {
             width: 100%;
             max-width: 400px;
             display: block;
             cursor: pointer;
+        }
+        
+        .message-video .video-js {
+            border-radius: 8px;
+            overflow: hidden;
         }
         
         .context-menu {
@@ -836,15 +844,50 @@
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
-                    // Usar la API directa para reproducir en la interfaz
+                    // ID único para el video
+                    const videoId = `video-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    // Usar Video.js para mejor compatibilidad
                     content = `
                         <div class="message-video" oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')">
-                            <video controls preload="metadata" style="max-width: 100%; border-radius: 8px; background: #000;">
+                            <video
+                                id="${videoId}"
+                                class="video-js vjs-default-skin"
+                                controls
+                                preload="metadata"
+                                style="max-width: 100%; border-radius: 8px; background: #000;"
+                                data-setup='{"fluid": true, "responsive": true}'
+                            >
                                 <source src="${msg.video_url}" type="video/mp4">
-                                Tu navegador no soporta video.
+                                <p class="vjs-no-js">
+                                    Para ver este video, por favor habilita JavaScript.
+                                </p>
                             </video>
                         </div>
                     `;
+                    // Inicializar Video.js después de que el DOM se actualice
+                    setTimeout(() => {
+                        const videoElement = document.getElementById(videoId);
+                        if (videoElement && !videojs.getPlayer(videoId)) {
+                            try {
+                                const player = videojs(videoId, {
+                                    fluid: true,
+                                    responsive: true,
+                                    playbackRates: [0.5, 1, 1.25, 1.5, 2],
+                                    html5: {
+                                        vhs: {
+                                            overrideNative: true
+                                        }
+                                    }
+                                });
+                                // Manejar errores silenciosamente para no interrumpir la experiencia
+                                player.on('error', function() {
+                                    console.warn('Error en video:', videoId, player.error());
+                                });
+                            } catch (e) {
+                                console.warn('Error inicializando Video.js:', e);
+                            }
+                        }
+                    }, 100);
                     // Si también tiene texto (caption), mostrarlo debajo del video
                     if (msg.text && msg.text.trim()) {
                         content += `<div class="message-caption" style="margin-top: 8px; font-size: 0.9em; opacity: 0.8;">${msg.text}</div>`;
@@ -1213,6 +1256,8 @@
             }
         });
     </script>
+    <!-- Video.js JS -->
+    <script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
 </body>
 </html>
 

@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video</title>
+    <!-- Video.js CSS -->
+    <link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
     <style>
         * {
             margin: 0;
@@ -20,35 +22,17 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
         
-        video {
+        .video-container {
             width: 100%;
             max-width: 100vw;
             max-height: 100vh;
-            background: #000;
+            position: relative;
         }
         
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            text-align: center;
-        }
-        
-        .loading-spinner {
-            border: 4px solid rgba(255,255,255,0.3);
-            border-top: 4px solid white;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .video-js {
+            width: 100%;
+            height: 100%;
+            max-height: 100vh;
         }
         
         .error {
@@ -61,87 +45,102 @@
             padding: 20px;
             background: rgba(255,0,0,0.3);
             border-radius: 8px;
+            z-index: 1000;
+            display: none;
         }
     </style>
 </head>
 <body>
-    <div id="loading" class="loading">
-        <div class="loading-spinner"></div>
-        <p>Cargando video...</p>
+    <div class="video-container">
+        <video
+            id="videoPlayer"
+            class="video-js vjs-default-skin vjs-big-play-centered"
+            controls
+            preload="auto"
+            data-setup='{"fluid": true, "responsive": true, "playbackRates": [0.5, 1, 1.25, 1.5, 2]}'
+        >
+            <p class="vjs-no-js">
+                Para ver este video, por favor habilita JavaScript y considera actualizar a un navegador que
+                <a href="https://videojs.com/html5-video-support/" target="_blank">soporte video HTML5</a>.
+            </p>
+        </video>
+        
+        <div id="error" class="error"></div>
     </div>
     
-    <video id="videoPlayer" controls autoplay style="display: none;">
-        Tu navegador no soporta la reproducción de video.
-    </video>
-    
-    <div id="error" class="error" style="display: none;"></div>
-    
+    <!-- Video.js JS -->
+    <script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
     <script>
         const videoId = '{{ video_id }}';
         const videoUrl = `/api/video/${videoId}`;
         
-        const loading = document.getElementById('loading');
-        const videoPlayer = document.getElementById('videoPlayer');
+        // Inicializar Video.js
+        const player = videojs('videoPlayer', {
+            fluid: true,
+            responsive: true,
+            playbackRates: [0.5, 1, 1.25, 1.5, 2],
+            html5: {
+                vhs: {
+                    overrideNative: true
+                },
+                nativeVideoTracks: false,
+                nativeAudioTracks: false,
+                nativeTextTracks: false
+            }
+        });
+        
         const errorDiv = document.getElementById('error');
         
-        videoPlayer.addEventListener('loadeddata', () => {
-            loading.style.display = 'none';
-            videoPlayer.style.display = 'block';
+        // Configurar la fuente del video
+        player.src({
+            src: videoUrl,
+            type: 'video/mp4' // Video.js intentará detectar el tipo automáticamente
         });
         
-        videoPlayer.addEventListener('canplay', () => {
-            loading.style.display = 'none';
-            videoPlayer.style.display = 'block';
-        });
-        
-        videoPlayer.addEventListener('error', (e) => {
-            loading.style.display = 'none';
-            errorDiv.style.display = 'block';
-            const error = videoPlayer.error;
+        // Manejar eventos de error
+        player.on('error', function() {
+            const error = player.error();
             let errorMsg = 'Error al cargar el video. Por favor, intenta más tarde.';
             
             if (error) {
                 switch(error.code) {
-                    case error.MEDIA_ERR_ABORTED:
+                    case 1: // MEDIA_ERR_ABORTED
                         errorMsg = 'La carga del video fue cancelada.';
                         break;
-                    case error.MEDIA_ERR_NETWORK:
+                    case 2: // MEDIA_ERR_NETWORK
                         errorMsg = 'Error de red al cargar el video. Verifica tu conexión.';
                         break;
-                    case error.MEDIA_ERR_DECODE:
-                        errorMsg = 'Error al decodificar el video. El formato puede no ser compatible con tu navegador.';
+                    case 3: // MEDIA_ERR_DECODE
+                        errorMsg = 'Error al decodificar el video. El formato puede no ser compatible.';
                         break;
-                    case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                        errorMsg = 'El formato del video no es compatible con tu navegador. Intenta descargarlo o usar otro navegador.';
+                    case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+                        errorMsg = 'El formato del video no es compatible. Intenta descargarlo o usar otro navegador.';
                         break;
                 }
             }
             
             errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: ${videoUrl}</small>`;
-            console.error('Error de video:', error, e);
+            errorDiv.style.display = 'block';
+            console.error('Error de video:', error);
             console.error('Video URL:', videoUrl);
-            console.error('Video element:', videoPlayer);
         });
         
-        // Cargar el video directamente (sin verificación previa para más velocidad)
-        videoPlayer.src = videoUrl;
+        // Ocultar error cuando el video se carga correctamente
+        player.on('loadeddata', function() {
+            errorDiv.style.display = 'none';
+        });
         
-        // Configurar para que comience a reproducir tan pronto como tenga datos
-        videoPlayer.preload = 'auto';
-        videoPlayer.muted = false; // Permitir sonido
-        
-        // Agregar soporte para diferentes tipos de video
-        videoPlayer.type = 'video/mp4'; // Fallback
-        
-        // Intentar cargar el video
-        videoPlayer.load();
+        player.on('canplay', function() {
+            errorDiv.style.display = 'none';
+        });
         
         // Log para depuración
-        console.log('Cargando video:', videoUrl);
-        console.log('Video player configurado:', {
-            src: videoPlayer.src,
-            preload: videoPlayer.preload,
-            muted: videoPlayer.muted
+        console.log('Cargando video con Video.js:', videoUrl);
+        
+        // Intentar reproducir automáticamente (puede fallar en algunos navegadores)
+        player.ready(function() {
+            console.log('Video.js está listo');
+            // No reproducir automáticamente para evitar problemas con políticas de autoplay
         });
     </script>
 </body>

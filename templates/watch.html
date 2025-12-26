@@ -106,28 +106,43 @@
                         errorMsg = 'La carga del video fue cancelada.';
                         break;
                     case error.MEDIA_ERR_NETWORK:
-                        errorMsg = 'Error de red al cargar el video.';
+                        errorMsg = 'Error de red al cargar el video. Verifica tu conexión.';
                         break;
                     case error.MEDIA_ERR_DECODE:
-                        errorMsg = 'Error al decodificar el video.';
+                        errorMsg = 'Error al decodificar el video. El formato puede no ser compatible con tu navegador.';
                         break;
                     case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                        errorMsg = 'El formato del video no es compatible.';
+                        errorMsg = 'El formato del video no es compatible con tu navegador. Intenta descargarlo o usar otro navegador.';
                         break;
                 }
             }
             
-            errorDiv.textContent = errorMsg;
+            errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: ${videoUrl}</small>`;
             console.error('Error de video:', error, e);
+            console.error('Video URL:', videoUrl);
+            console.error('Video element:', videoPlayer);
         });
         
         // Cargar el video directamente (sin verificación previa para más velocidad)
         videoPlayer.src = videoUrl;
-        videoPlayer.load();
         
         // Configurar para que comience a reproducir tan pronto como tenga datos
         videoPlayer.preload = 'auto';
         videoPlayer.muted = false; // Permitir sonido
+        
+        // Agregar soporte para diferentes tipos de video
+        videoPlayer.type = 'video/mp4'; // Fallback
+        
+        // Intentar cargar el video
+        videoPlayer.load();
+        
+        // Log para depuración
+        console.log('Cargando video:', videoUrl);
+        console.log('Video player configurado:', {
+            src: videoPlayer.src,
+            preload: videoPlayer.preload,
+            muted: videoPlayer.muted
+        });
     </script>
 </body>
 </html>

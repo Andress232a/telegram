@@ -1372,20 +1372,49 @@ def get_video(video_id):
             messages = await client.get_messages(target_chat, ids=message_id)
             
             if not messages or not messages.media:
-                return None, None
+                return None, None, None
             
             # Obtener el documento del mensaje
             if hasattr(messages.media, 'document'):
                 document = messages.media.document
                 file_size = document.size
-                return messages, file_size
+                # Obtener el mime_type real del documento
+                mime_type = 'video/mp4'  # Fallback por defecto
+                if hasattr(document, 'mime_type') and document.mime_type:
+                    mime_type = document.mime_type
+                    # Asegurarse de que es un tipo de video válido
+                    if not mime_type.startswith('video/'):
+                        # Si no es video, intentar detectar por extensión del nombre
+                        if hasattr(document, 'attributes'):
+                            for attr in document.attributes:
+                                if hasattr(attr, 'file_name') and attr.file_name:
+                                    filename = attr.file_name.lower()
+                                    if filename.endswith('.mp4'):
+                                        mime_type = 'video/mp4'
+                                    elif filename.endswith('.webm'):
+                                        mime_type = 'video/webm'
+                                    elif filename.endswith('.mkv'):
+                                        mime_type = 'video/x-matroska'
+                                    elif filename.endswith('.avi'):
+                                        mime_type = 'video/x-msvideo'
+                                    break
+                        # Si aún no es video, usar mp4 como fallback
+                        if not mime_type.startswith('video/'):
+                            mime_type = 'video/mp4'
+                return messages, file_size, mime_type
             
-            return None, None
+            return None, None, None
         
-        messages, file_size = run_async(get_video_info(), client_loop, timeout=30)
+        messages, file_size, mime_type = run_async(get_video_info(), client_loop, timeout=30)
         
         if not messages:
             return jsonify({'error': 'No se pudo obtener el video desde Telegram'}), 500
+        
+        # Si no hay mime_type, usar mp4 como fallback
+        if not mime_type:
+            mime_type = 'video/mp4'
+        
+        print(f"🎬 Sirviendo video con mime_type: {mime_type}")
         
         # Si el video está pre-cargado en memoria, servirlo inmediatamente (como Telegram)
         if video_id in video_memory_cache:
@@ -1408,22 +1437,22 @@ def get_video(video_id):
                     
                     data = video_data[start:end+1]
                     headers = {
-                        'Content-Type': 'video/mp4',
+                        'Content-Type': mime_type,
                         'Content-Range': f'bytes {start}-{end}/{len(video_data)}',
                         'Content-Length': str(len(data)),
                         'Accept-Ranges': 'bytes',
                     }
-                    return Response(data, 206, headers, mimetype='video/mp4')
+                    return Response(data, 206, headers, mimetype=mime_type)
                 except:
                     pass
             
             # Servir completo desde memoria
             headers = {
-                'Content-Type': 'video/mp4',
+                'Content-Type': mime_type,
                 'Content-Length': str(len(video_data)),
                 'Accept-Ranges': 'bytes',
             }
-            return Response(video_data, 200, headers, mimetype='video/mp4')
+            return Response(video_data, 200, headers, mimetype=mime_type)
         
         # Si no está en memoria, descargar y servir (y guardar en memoria para próximas veces)
         print(f"☁️ Descargando desde la nube de Telegram: {video_id}")
@@ -1458,22 +1487,22 @@ def get_video(video_id):
                         
                         data = video_data[start:end+1]
                         headers = {
-                            'Content-Type': 'video/mp4',
+                            'Content-Type': mime_type,
                             'Content-Range': f'bytes {start}-{end}/{len(video_data)}',
                             'Content-Length': str(len(data)),
                             'Accept-Ranges': 'bytes',
                         }
-                        return Response(data, 206, headers, mimetype='video/mp4')
+                        return Response(data, 206, headers, mimetype=mime_type)
                     except:
                         pass
                 
                 # Servir completo desde memoria
                 headers = {
-                    'Content-Type': 'video/mp4',
+                    'Content-Type': mime_type,
                     'Content-Length': str(len(video_data)),
                     'Accept-Ranges': 'bytes',
                 }
-                return Response(video_data, 200, headers, mimetype='video/mp4')
+                return Response(video_data, 200, headers, mimetype=mime_type)
             else:
                 return jsonify({'error': 'No se pudo descargar el video'}), 500
         except Exception as e:
@@ -1506,7 +1535,7 @@ def get_video(video_id):
                 data = run_async(download_range(), client_loop, timeout=300)
                 
                 headers = {
-                    'Content-Type': 'video/mp4',
+                    'Content-Type': mime_type,
                     'Content-Range': f'bytes {start}-{end}/{file_size}',
                     'Content-Length': str(len(data)),
                     'Accept-Ranges': 'bytes',
@@ -1514,13 +1543,13 @@ def get_video(video_id):
                 }
                 
                 print(f"📡 Sirviendo rango desde Telegram: {start}-{end}")
-                return Response(data, 206, headers, mimetype='video/mp4')
+                return Response(data, 206, headers, mimetype=mime_type)
             except Exception as e:
                 print(f"⚠️ Error con range request: {e}")
         
         # Streaming completo desde Telegram (sin guardar nada)
         headers = {
-            'Content-Type': 'video/mp4',
+            'Content-Type': mime_type,
             'Accept-Ranges': 'bytes',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Transfer-Encoding': 'chunked'
@@ -1529,7 +1558,7 @@ def get_video(video_id):
         return Response(
             stream_from_telegram(),
             headers=headers,
-            mimetype='video/mp4',
+            mimetype=mime_type,
             direct_passthrough=True
         )
             

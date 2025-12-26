@@ -290,10 +290,11 @@
             align-self: flex-end;
         }
         
-        .message-video {
+        .message-video-thumbnail {
             margin-top: 10px;
             border-radius: 8px;
             overflow: hidden;
+            position: relative;
         }
         
         .message-video {
@@ -838,74 +839,73 @@
                 const isOwn = msg.from_id === null || msg.from_id === 'None';
                 
                 let content = '';
-                // Si tiene video, mostrar el reproductor (prioridad sobre el texto)
+                // Si tiene video, mostrar miniatura pequeña (como Telegram)
                 if (msg.video_url) {
-                    console.log('🎬 Renderizando video:', msg.video_url);
+                    console.log('🎬 Renderizando video miniatura:', msg.video_url);
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
-                    // ID único para el video
-                    const videoId = `video-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    // Usar HTML5 nativo primero (siempre funciona)
+                    // Miniatura pequeña con icono de play (estilo Telegram)
                     content = `
-                        <div class="message-video" oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')">
+                        <div class="message-video-thumbnail" 
+                             onclick="window.open('${watchUrl}', '_blank')"
+                             oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')"
+                             style="
+                                 position: relative;
+                                 width: 200px;
+                                 height: 120px;
+                                 border-radius: 8px;
+                                 background: #1a1a1a;
+                                 cursor: pointer;
+                                 overflow: hidden;
+                                 display: flex;
+                                 align-items: center;
+                                 justify-content: center;
+                                 transition: transform 0.2s;
+                             "
+                             onmouseover="this.style.transform='scale(1.02)'"
+                             onmouseout="this.style.transform='scale(1)'"
+                        >
                             <video
-                                id="${videoId}"
-                                controls
                                 preload="metadata"
-                                style="max-width: 100%; border-radius: 8px; background: #000; width: 100%;"
+                                muted
+                                style="
+                                    width: 100%;
+                                    height: 100%;
+                                    object-fit: cover;
+                                    opacity: 0.7;
+                                "
                             >
                                 <source src="${msg.video_url}" type="video/mp4">
-                                Tu navegador no soporta video HTML5.
                             </video>
+                            <div style="
+                                position: absolute;
+                                width: 48px;
+                                height: 48px;
+                                border-radius: 50%;
+                                background: rgba(0, 0, 0, 0.6);
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                pointer-events: none;
+                            ">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="white" style="margin-left: 2px;">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                            </div>
+                            <div style="
+                                position: absolute;
+                                bottom: 8px;
+                                right: 8px;
+                                background: rgba(0, 0, 0, 0.7);
+                                color: white;
+                                padding: 4px 8px;
+                                border-radius: 4px;
+                                font-size: 11px;
+                                pointer-events: none;
+                            ">🎬 Video</div>
                         </div>
                     `;
-                    // Configurar el video después de que el DOM se actualice
-                    setTimeout(() => {
-                        const videoElement = document.getElementById(videoId);
-                        if (videoElement) {
-                            // Configurar eventos de error
-                            videoElement.addEventListener('error', function(e) {
-                                const error = videoElement.error;
-                                console.error('Error en video:', videoId, error);
-                                if (error) {
-                                    let errorMsg = 'Error al cargar el video';
-                                    switch(error.code) {
-                                        case error.MEDIA_ERR_ABORTED:
-                                            errorMsg = 'Carga cancelada';
-                                            break;
-                                        case error.MEDIA_ERR_NETWORK:
-                                            errorMsg = 'Error de red';
-                                            break;
-                                        case error.MEDIA_ERR_DECODE:
-                                            errorMsg = 'Error de formato';
-                                            break;
-                                        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-                                            errorMsg = 'Formato no soportado';
-                                            break;
-                                    }
-                                    console.error('Error de video:', errorMsg, 'URL:', msg.video_url);
-                                }
-                            });
-                            
-                            // Intentar mejorar con Video.js si está disponible (opcional)
-                            if (typeof videojs !== 'undefined') {
-                                try {
-                                    videoElement.className = 'video-js vjs-default-skin';
-                                    const player = videojs(videoId, {
-                                        fluid: true,
-                                        responsive: true,
-                                        playbackRates: [0.5, 1, 1.25, 1.5, 2]
-                                    });
-                                    player.on('error', function() {
-                                        console.warn('Error en Video.js:', videoId, player.error());
-                                    });
-                                } catch (e) {
-                                    console.warn('Error inicializando Video.js:', e);
-                                }
-                            }
-                        }
-                    }, 100);
                     // Si también tiene texto (caption), mostrarlo debajo del video
                     if (msg.text && msg.text.trim()) {
                         content += `<div class="message-caption" style="margin-top: 8px; font-size: 0.9em; opacity: 0.8;">${msg.text}</div>`;

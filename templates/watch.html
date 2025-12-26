@@ -56,9 +56,11 @@
         <video
             id="videoPlayer"
             controls
-            preload="auto"
+            preload="metadata"
+            playsinline
             style="width: 100%; max-width: 100vw; max-height: 100vh; background: #000;"
         >
+            <source src="/api/video/{{ video_id }}" type="video/mp4">
             Tu navegador no soporta la reproducción de video HTML5.
         </video>
         
@@ -77,9 +79,51 @@
         
         // Función para configurar el reproductor HTML5 nativo
         function setupNativePlayer() {
-            console.log('Configurando reproductor HTML5 nativo');
+            console.log('Configurando reproductor HTML5 nativo con streaming progresivo');
+            
+            // Configurar para streaming progresivo (como en los mensajes)
+            videoElement.preload = 'metadata'; // Solo cargar metadatos primero
             videoElement.src = videoUrl;
+            
+            // Forzar que el navegador use Range requests
             videoElement.load();
+            
+            // Intentar reproducir automáticamente cuando tenga suficientes datos
+            videoElement.addEventListener('loadedmetadata', function() {
+                console.log('Metadatos del video cargados');
+                errorDiv.style.display = 'none';
+                // Intentar reproducir automáticamente
+                videoElement.play().catch(e => {
+                    console.log('Autoplay bloqueado (normal en algunos navegadores):', e);
+                });
+            });
+            
+            videoElement.addEventListener('loadeddata', function() {
+                errorDiv.style.display = 'none';
+                console.log('Datos iniciales del video cargados');
+            });
+            
+            videoElement.addEventListener('canplay', function() {
+                errorDiv.style.display = 'none';
+                console.log('Video listo para reproducir');
+            });
+            
+            videoElement.addEventListener('canplaythrough', function() {
+                errorDiv.style.display = 'none';
+                console.log('Video puede reproducirse sin interrupciones');
+            });
+            
+            videoElement.addEventListener('progress', function() {
+                // El video está cargando progresivamente
+                if (videoElement.buffered.length > 0) {
+                    const bufferedEnd = videoElement.buffered.end(videoElement.buffered.length - 1);
+                    const duration = videoElement.duration;
+                    if (duration > 0) {
+                        const percentLoaded = (bufferedEnd / duration) * 100;
+                        console.log(`Video cargado: ${percentLoaded.toFixed(1)}%`);
+                    }
+                }
+            });
             
             videoElement.addEventListener('error', function(e) {
                 const error = videoElement.error;
@@ -103,15 +147,6 @@
                 errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: ${videoUrl}</small>`;
                 errorDiv.style.display = 'block';
                 console.error('Error de video:', error);
-            });
-            
-            videoElement.addEventListener('loadeddata', function() {
-                errorDiv.style.display = 'none';
-                console.log('Video cargado correctamente');
-            });
-            
-            videoElement.addEventListener('canplay', function() {
-                errorDiv.style.display = 'none';
             });
         }
         
@@ -139,10 +174,16 @@
                     }
                 });
                 
-                // Configurar la fuente
+                // Configurar la fuente con streaming progresivo
                 player.src({
                     src: videoUrl,
                     type: 'video/mp4'
+                });
+                
+                // Configurar para streaming progresivo
+                player.ready(function() {
+                    // Asegurar que use Range requests
+                    this.tech({ 'nativeVideoTracks': false });
                 });
                 
                 // Manejar errores

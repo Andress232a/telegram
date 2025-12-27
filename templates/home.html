@@ -1572,10 +1572,18 @@
                     headers: {'Content-Type': 'application/json'}
                 });
                 
-                if (response.ok) {
-                    window.location.href = '/';
+                // Verificar que la respuesta es JSON
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    const data = await response.json();
+                    if (response.ok && data.redirect) {
+                        window.location.href = data.redirect;
+                    } else {
+                        window.location.href = '/';
+                    }
                 } else {
-                    alert('Error al cerrar sesión');
+                    // Si no es JSON, redirigir de todas formas
+                    window.location.href = '/';
                 }
             } catch (error) {
                 console.error('Error:', error);

@@ -222,6 +222,17 @@
                     body: JSON.stringify({api_id: apiId, api_hash: apiHash, phone: phone})
                 });
                 
+                // Verificar que la respuesta es JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Respuesta no es JSON:', text.substring(0, 200));
+                    showError('Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página.');
+                    btn.disabled = false;
+                    btn.textContent = 'Configurar y Conectar';
+                    return;
+                }
+                
                 const data = await response.json();
                 
                 if (response.ok) {
@@ -233,7 +244,11 @@
                     btn.textContent = 'Configurar y Conectar';
                 }
             } catch (error) {
-                showError('Error de conexión: ' + error.message);
+                let errorMsg = 'Error de conexión: ' + error.message;
+                if (error.message.includes('JSON') || error.message.includes('<!doctype')) {
+                    errorMsg = 'Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página e intenta de nuevo.';
+                }
+                showError(errorMsg);
                 btn.disabled = false;
                 btn.textContent = 'Configurar y Conectar';
             }
@@ -252,6 +267,19 @@
                 });
                 
                 clearTimeout(timeoutId);
+                
+                // Verificar que la respuesta es JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Respuesta no es JSON:', text.substring(0, 200));
+                    showError('Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página.');
+                    const btn = document.getElementById('configBtn');
+                    btn.disabled = false;
+                    btn.textContent = 'Configurar y Conectar';
+                    return;
+                }
+                
                 const data = await response.json();
                 
                 if (response.ok) {
@@ -275,6 +303,8 @@
             } catch (error) {
                 if (error.name === 'AbortError') {
                     showError('Tiempo de espera agotado. Verifica tu conexión a internet e intenta de nuevo.');
+                } else if (error.message.includes('JSON') || error.message.includes('<!doctype')) {
+                    showError('Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página e intenta de nuevo.');
                 } else {
                     showError('Error de conexión: ' + error.message);
                 }
@@ -303,6 +333,17 @@
                     body: JSON.stringify({code: code, password: needsPassword ? document.getElementById('password').value : null})
                 });
                 
+                // Verificar que la respuesta es JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Respuesta no es JSON:', text.substring(0, 200));
+                    showError('Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página.');
+                    btn.disabled = false;
+                    btn.textContent = 'Verificar Código';
+                    return;
+                }
+                
                 const data = await response.json();
                 
                 if (response.ok) {
@@ -325,7 +366,11 @@
                     btn.textContent = 'Verificar Código';
                 }
             } catch (error) {
-                showError('Error: ' + error.message);
+                let errorMsg = 'Error: ' + error.message;
+                if (error.message.includes('JSON') || error.message.includes('<!doctype')) {
+                    errorMsg = 'Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página e intenta de nuevo.';
+                }
+                showError(errorMsg);
                 btn.disabled = false;
                 btn.textContent = 'Verificar Código';
             }
@@ -350,6 +395,17 @@
                     body: JSON.stringify({code: code, password: password})
                 });
                 
+                // Verificar que la respuesta es JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Respuesta no es JSON:', text.substring(0, 200));
+                    showError('Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página.');
+                    btn.disabled = false;
+                    btn.textContent = 'Verificar Contraseña';
+                    return;
+                }
+                
                 const data = await response.json();
                 
                 if (response.ok && data.connected) {
@@ -363,7 +419,11 @@
                     btn.textContent = 'Verificar Contraseña';
                 }
             } catch (error) {
-                showError('Error: ' + error.message);
+                let errorMsg = 'Error: ' + error.message;
+                if (error.message.includes('JSON') || error.message.includes('<!doctype')) {
+                    errorMsg = 'Error: El servidor devolvió una respuesta inválida. Por favor, recarga la página e intenta de nuevo.';
+                }
+                showError(errorMsg);
                 btn.disabled = false;
                 btn.textContent = 'Verificar Contraseña';
             }

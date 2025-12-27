@@ -326,26 +326,22 @@ def delete_config():
 @app.route('/')
 def index():
     """Página principal - configuración inicial"""
-    # Si hay configuración guardada y sesión válida, redirigir a home
+    # Solo verificar si hay una sesión activa válida para ESTE usuario específico
+    # NO cargar configuración guardada globalmente - cada usuario debe iniciar sesión
     if 'phone' in session:
-        # Verificar si la sesión es válida
+        # Verificar si la sesión es válida para este usuario
         session_name = session.get('session_name', '')
         if session_name and os.path.exists(session_name + '.session'):
-            return redirect(url_for('home'))
+            # Verificar que el archivo de sesión pertenece a este usuario
+            phone = session.get('phone')
+            if phone and session_name == f"sessions/{secure_filename(phone)}":
+                return redirect(url_for('home'))
+            else:
+                # Sesión no coincide, limpiar
+                session.clear()
     
-    # Si hay configuración guardada, intentar cargarla
-    saved_config = load_saved_config()
-    if saved_config:
-        # Cargar en sesión
-        session['api_id'] = saved_config['api_id']
-        session['api_hash'] = saved_config['api_hash']
-        session['phone'] = saved_config['phone']
-        session['session_name'] = saved_config['session_name']
-        
-        # Verificar si hay sesión guardada
-        if os.path.exists(saved_config['session_name'] + '.session'):
-            return redirect(url_for('home'))
-    
+    # NO cargar configuración guardada globalmente
+    # Cada usuario debe iniciar sesión con su propia cuenta
     return render_template('index.html')
 
 @app.route('/api/configure', methods=['POST'])
@@ -367,8 +363,8 @@ def configure():
     session['phone'] = phone
     session['session_name'] = session_name
     
-    # Guardar en archivo para persistencia
-    save_config(api_id, api_hash, phone, session_name)
+    # NO guardar en archivo global - cada usuario tiene su propia sesión
+    # La sesión de Flask ya maneja la persistencia por usuario mediante cookies
     
     return jsonify({'message': 'Configuración guardada', 'next': 'connect'})
 
@@ -606,18 +602,25 @@ def home():
     """Página principal estilo Telegram"""
     print(f"🏠 Página home - Session phone: {session.get('phone', 'No hay')}")
     
-    # Verificar si hay phone en sesión
+    # Verificar si hay phone en sesión - cada usuario debe tener su propia sesión
     if 'phone' not in session:
         print("❌ No hay phone en sesión, redirigiendo...")
         return redirect(url_for('index'))
     
     phone = session['phone']
     
+    # Verificar que la sesión es válida para este usuario específico
+    session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
+    if session_name != f"sessions/{secure_filename(phone)}":
+        print(f"❌ Sesión no coincide con el usuario, redirigiendo...")
+        session.clear()
+        return redirect(url_for('index'))
+    
     # Si no está en telegram_clients, intentar cargarlo desde la sesión guardada
     if phone not in telegram_clients:
-        session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
         if not os.path.exists(session_name + '.session'):
             print(f"❌ No hay cliente ni sesión para {phone}, redirigiendo...")
+            session.clear()
             return redirect(url_for('index'))
     
     return render_template('home.html')
@@ -1459,21 +1462,14 @@ def get_video(video_id):
     # Obtener phone de la sesión o configuración guardada
     phone = session.get('phone')
     if not phone:
-        saved_config = load_saved_config()
-        if saved_config:
-            phone = saved_config.get('phone')
+        # NO cargar configuración guardada globalmente
+        # Si no hay sesión activa, el usuario debe iniciar sesión
+        return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
     
     try:
-        # Cargar configuración si no hay sesión activa
-        if 'phone' not in session or session.get('phone') != phone:
-            saved_config = load_saved_config()
-            if saved_config and saved_config.get('phone') == phone:
-                session['api_id'] = saved_config['api_id']
-                session['api_hash'] = saved_config['api_hash']
-                session['phone'] = saved_config['phone']
-                session['session_name'] = saved_config['session_name']
-            else:
-                return jsonify({'error': 'Sesión no disponible'}), 401
+        # Verificar que la sesión es válida para este usuario
+        if 'phone' not in session:
+            return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
         
         # Obtener cliente de Telegram
         try:
@@ -1725,10 +1721,10 @@ def logout():
     # Limpiar sesión
     session.clear()
     
-    # Eliminar configuración guardada
-    delete_config()
+    # NO eliminar configuración global - cada usuario tiene su propia sesión
+    # La sesión de Flask se limpia automáticamente al hacer session.clear()
     
-    return jsonify({'message': 'Sesión cerrada exitosamente'})
+    return jsonify({'message': 'Sesión cerrada exitosamente', 'redirect': '/'})
 
 @app.template_filter('timestamp_to_date')
 def timestamp_to_date(timestamp):
@@ -1761,6 +1757,28 @@ def cleanup_uploads():
         return jsonify({'message': 'Limpieza completada'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# Manejador de errores para asegurar que todas las rutas API devuelvan JSON
+@app.errorhandler(404)
+def not_found(error):
+    """Manejar errores 404 - devolver JSON si es una ruta API"""
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Endpoint no encontrado'}), 404
+    return render_template('index.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Manejar errores 500 - devolver JSON si es una ruta API"""
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Error interno del servidor'}), 500
+    return render_template('index.html'), 500
+
+@app.errorhandler(401)
+def unauthorized(error):
+    """Manejar errores 401 - devolver JSON si es una ruta API"""
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'No autorizado. Por favor, inicia sesión.'}), 401
+    return redirect(url_for('index')), 401
 
 if __name__ == '__main__':
     # En producción, usar debug=False

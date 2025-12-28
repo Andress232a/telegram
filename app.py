@@ -768,8 +768,14 @@ def get_chats():
         # Obtener cliente de forma segura
         client = get_or_create_client(phone)
         
-        # Usar el loop del cliente para ejecutar la corrutina
+        # Verificar y obtener el loop del cliente
         client_loop = client._loop
+        if not client_loop or client_loop.is_closed():
+            print(f"⚠️ Loop del cliente cerrado o no disponible, obteniendo uno nuevo...")
+            client_loop = get_event_loop()
+            # Actualizar el loop del cliente
+            if phone in telegram_clients:
+                telegram_clients[phone]['loop'] = client_loop
         
         async def fetch_chats_and_folders():
             chats = []
@@ -984,8 +990,35 @@ def get_or_create_client(phone):
     if phone in telegram_clients:
         client_data = telegram_clients[phone]
         client = client_data.get('client')
-        if client and client.is_connected():
-            return client
+        loop = client_data.get('loop')
+        
+        # Verificar que el cliente existe y está conectado
+        if client:
+            # Verificar que el loop no esté cerrado
+            if loop and not loop.is_closed():
+                # Verificar conexión
+                try:
+                    if client.is_connected():
+                        # Asegurarse de que el cliente tenga el loop correcto
+                        if client._loop != loop:
+                            client._loop = loop
+                        return client
+                except Exception as e:
+                    print(f"⚠️ Error verificando conexión del cliente: {e}")
+            else:
+                print(f"⚠️ Loop del cliente cerrado, creando uno nuevo...")
+                # El loop está cerrado, crear uno nuevo
+                loop = get_event_loop()
+                client_data['loop'] = loop
+                if client:
+                    client._loop = loop
+                    try:
+                        if not client.is_connected():
+                            run_async(client.connect(), loop, timeout=10)
+                        return client
+                    except Exception as e:
+                        print(f"⚠️ Error reconectando cliente: {e}")
+                        # Continuar para crear uno nuevo
     
     # Si no hay cliente o no está conectado, crear uno nuevo
     session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
@@ -1036,8 +1069,14 @@ def get_messages(chat_id):
         # Obtener cliente de forma segura
         client = get_or_create_client(phone)
         
-        # Usar el loop del cliente
+        # Verificar y obtener el loop del cliente
         client_loop = client._loop
+        if not client_loop or client_loop.is_closed():
+            print(f"⚠️ Loop del cliente cerrado o no disponible, obteniendo uno nuevo...")
+            client_loop = get_event_loop()
+            # Actualizar el loop del cliente
+            if phone in telegram_clients:
+                telegram_clients[phone]['loop'] = client_loop
         
         async def fetch_messages():
             messages = []
@@ -1513,9 +1552,13 @@ def get_video(video_id):
                     return jsonify({'error': f'Error de conexión: {str(e)}'}), 500
             
             client_loop = client._loop
-            if not client_loop:
-                print(f"❌ No se pudo obtener el loop del cliente")
-                return jsonify({'error': 'Error interno del cliente'}), 500
+            if not client_loop or client_loop.is_closed():
+                print(f"⚠️ Loop del cliente cerrado o no disponible, obteniendo uno nuevo...")
+                client_loop = get_event_loop()
+                # Actualizar el loop del cliente
+                if phone in telegram_clients:
+                    telegram_clients[phone]['loop'] = client_loop
+                    client._loop = client_loop
         except Exception as e:
             print(f"❌ Error obteniendo cliente: {e}")
             import traceback

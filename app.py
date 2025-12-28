@@ -999,26 +999,21 @@ def get_or_create_client(phone):
                 # Verificar conexión
                 try:
                     if client.is_connected():
-                        # Asegurarse de que el cliente tenga el loop correcto
-                        if client._loop != loop:
-                            client._loop = loop
+                        # NO intentar cambiar el loop - Telethon no lo permite después de la conexión
                         return client
                 except Exception as e:
                     print(f"⚠️ Error verificando conexión del cliente: {e}")
             else:
-                print(f"⚠️ Loop del cliente cerrado, creando uno nuevo...")
-                # El loop está cerrado, crear uno nuevo
-                loop = get_event_loop()
-                client_data['loop'] = loop
-                if client:
-                    client._loop = loop
-                    try:
-                        if not client.is_connected():
-                            run_async(client.connect(), loop, timeout=10)
-                        return client
-                    except Exception as e:
-                        print(f"⚠️ Error reconectando cliente: {e}")
-                        # Continuar para crear uno nuevo
+                print(f"⚠️ Loop del cliente cerrado, necesitamos crear un nuevo cliente...")
+                # El loop está cerrado, NO podemos cambiar el loop de un cliente conectado
+                # Necesitamos desconectar y crear uno nuevo
+                try:
+                    if client.is_connected():
+                        run_async(client.disconnect(), loop if loop and not loop.is_closed() else get_event_loop(), timeout=5)
+                except:
+                    pass
+                # Limpiar el cliente viejo
+                del telegram_clients[phone]
     
     # Si no hay cliente o no está conectado, crear uno nuevo
     session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
@@ -1042,17 +1037,13 @@ def get_or_create_client(phone):
             raise
     
     # Guardar en telegram_clients
-    if phone not in telegram_clients:
-        telegram_clients[phone] = {
-            'client': client,
-            'api_id': api_id,
-            'api_hash': api_hash,
-            'session_name': session_name,
-            'loop': loop
-        }
-    else:
-        telegram_clients[phone]['client'] = client
-        telegram_clients[phone]['loop'] = loop
+    telegram_clients[phone] = {
+        'client': client,
+        'api_id': api_id,
+        'api_hash': api_hash,
+        'session_name': session_name,
+        'loop': loop
+    }
     
     return client
 
@@ -1553,12 +1544,19 @@ def get_video(video_id):
             
             client_loop = client._loop
             if not client_loop or client_loop.is_closed():
-                print(f"⚠️ Loop del cliente cerrado o no disponible, obteniendo uno nuevo...")
-                client_loop = get_event_loop()
-                # Actualizar el loop del cliente
+                print(f"⚠️ Loop del cliente cerrado, necesitamos recrear el cliente...")
+                # Si el loop está cerrado, necesitamos recrear el cliente
+                # Limpiar el cliente actual
+                try:
+                    if client.is_connected():
+                        run_async(client.disconnect(), client_loop if client_loop and not client_loop.is_closed() else get_event_loop(), timeout=5)
+                except:
+                    pass
                 if phone in telegram_clients:
-                    telegram_clients[phone]['loop'] = client_loop
-                    client._loop = client_loop
+                    del telegram_clients[phone]
+                # Obtener un nuevo cliente
+                client = get_or_create_client(phone)
+                client_loop = client._loop
         except Exception as e:
             print(f"❌ Error obteniendo cliente: {e}")
             import traceback

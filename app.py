@@ -4,6 +4,7 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 from telethon.tl.types import DocumentAttributeVideo, User, Chat, Channel
 from telethon.tl.functions.messages import GetDialogFiltersRequest
+from telethon.tl.functions.upload import GetFileRequest
 import asyncio
 import os
 import json
@@ -1628,15 +1629,35 @@ def get_video(video_id):
                 
                 chunk_size = end - start + 1
                 
-                # Descargar solo el rango solicitado
+                # Descargar solo el rango solicitado usando GetFileRequest (más eficiente)
                 async def download_range():
-                    buffer = BytesIO()
-                    await client.download_media(messages, buffer)
-                    buffer.seek(start)
-                    return buffer.read(chunk_size)
+                    # Obtener el InputFileLocation del documento
+                    if hasattr(messages.media, 'document'):
+                        document = messages.media.document
+                        # Obtener el InputDocumentFileLocation
+                        from telethon.tl.types import InputDocumentFileLocation
+                        file_location = InputDocumentFileLocation(
+                            id=document.id,
+                            access_hash=document.access_hash,
+                            file_reference=document.file_reference,
+                            thumb_size=''
+                        )
+                        
+                        # Usar GetFileRequest para descargar solo el rango necesario
+                        # Esto es MUCHO más rápido que descargar todo el archivo
+                        result = await client(GetFileRequest(
+                            location=file_location,
+                            offset=start,
+                            limit=chunk_size
+                        ))
+                        
+                        if result and hasattr(result, 'bytes'):
+                            return result.bytes
+                        return None
+                    return None
                 
-                # Timeout dinámico
-                timeout_seconds = min(300, max(30, int(chunk_size / (1024 * 1024)) * 2))
+                # Timeout dinámico (más corto porque solo descargamos un chunk)
+                timeout_seconds = min(60, max(10, int(chunk_size / (1024 * 1024)) * 5))
                 
                 chunk_data = run_async(download_range(), client_loop, timeout=timeout_seconds)
                 
@@ -1661,17 +1682,31 @@ def get_video(video_id):
         print(f"📥 Solicitud inicial, sirviendo primeros bytes para metadata...")
         
         async def download_initial_chunk():
-            buffer = BytesIO()
             # Para la solicitud inicial, descargar solo los primeros bytes necesarios para metadata
             # Telegram Web usa aproximadamente 512KB-1MB para metadata
             initial_size = min(1024 * 1024, file_size)  # 1MB es suficiente para metadata de la mayoría de videos
             
-            # Usar download_media que descarga completo, pero solo leeremos los primeros bytes
-            # En el futuro, si Telethon soporta descarga parcial, optimizar aquí
-            await client.download_media(messages, buffer)
-            buffer.seek(0)
-            initial_data = buffer.read(initial_size)
-            return initial_data
+            # Usar GetFileRequest para descargar solo los primeros bytes (MUCHO más rápido)
+            if hasattr(messages.media, 'document'):
+                document = messages.media.document
+                from telethon.tl.types import InputDocumentFileLocation
+                file_location = InputDocumentFileLocation(
+                    id=document.id,
+                    access_hash=document.access_hash,
+                    file_reference=document.file_reference,
+                    thumb_size=''
+                )
+                
+                # Descargar solo los primeros bytes necesarios para metadata
+                result = await client(GetFileRequest(
+                    location=file_location,
+                    offset=0,
+                    limit=initial_size
+                ))
+                
+                if result and hasattr(result, 'bytes'):
+                    return result.bytes
+            return None
         
         try:
             initial_data = run_async(download_initial_chunk(), client_loop, timeout=60)

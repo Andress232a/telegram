@@ -1853,6 +1853,20 @@ def get_video(video_id):
                 
                 chunk_size = end - start + 1
                 
+                # Helper para calcular limit válido (debe ser múltiplo de 1024 y máximo 1MB)
+                def get_valid_limit(requested_size):
+                    # Telegram requiere que limit sea múltiplo de 1024
+                    # Y el máximo es típicamente 1MB (1024*1024)
+                    max_limit = 1024 * 1024  # 1MB máximo
+                    # Redondear hacia arriba al múltiplo de 1024 más cercano
+                    valid_limit = ((requested_size + 1023) // 1024) * 1024
+                    # Asegurar que no exceda el máximo
+                    valid_limit = min(valid_limit, max_limit)
+                    # Asegurar que sea al menos 1024 (mínimo válido)
+                    if valid_limit < 1024:
+                        valid_limit = 1024
+                    return valid_limit
+                
                 # Descargar solo el rango solicitado usando GetFileRequest (streaming progresivo real)
                 async def download_range():
                     # Obtener el InputFileLocation del documento
@@ -1889,11 +1903,13 @@ def get_video(video_id):
                         # Descargar SOLO el rango solicitado usando GetFileRequest
                         # Esto permite streaming progresivo real - el video empieza a reproducirse inmediatamente
                         try:
-                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={chunk_size}, file_id={document.id}")
+                            # Calcular limit válido (múltiplo de 1024, máximo 1MB)
+                            valid_limit = get_valid_limit(chunk_size)
+                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}), file_id={document.id}")
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,
-                                limit=chunk_size
+                                limit=valid_limit
                             ))
                             
                             # El resultado de GetFileRequest puede tener diferentes estructuras
@@ -1922,11 +1938,13 @@ def get_video(video_id):
                                 
                                 while remaining > 0:
                                     current_chunk_size = min(chunk_limit, remaining)
+                                    # Asegurar que el limit sea múltiplo de 1024
+                                    valid_chunk_limit = get_valid_limit(current_chunk_size)
                                     try:
                                         result = await client(GetFileRequest(
                                             location=file_location,
                                             offset=current_offset,
-                                            limit=current_chunk_size
+                                            limit=valid_chunk_limit
                                         ))
                                         chunk_data = None
                                         if hasattr(result, 'bytes'):
@@ -1975,10 +1993,11 @@ def get_video(video_id):
                                         )
                                         print(f"✅ file_reference actualizado en range, reintentando GetFileRequest...")
                                         # Reintentar con file_reference actualizado
+                                        retry_limit = get_valid_limit(min(1024 * 1024, chunk_size))
                                         result = await client(GetFileRequest(
                                             location=file_location,
                                             offset=start,
-                                            limit=min(1024 * 1024, chunk_size)  # Intentar con 1MB primero
+                                            limit=retry_limit
                                         ))
                                         data = None
                                         if hasattr(result, 'bytes'):
@@ -2076,11 +2095,27 @@ def get_video(video_id):
                         except Exception as ref_error:
                             print(f"⚠️ Error actualizando file_reference: {ref_error}")
                     
-                    print(f"🔍 Intentando GetFileRequest: offset=0, limit={initial_size}, file_id={document.id}")
+                    # Helper para calcular limit válido (debe ser múltiplo de 1024 y máximo 1MB)
+                    def get_valid_limit(requested_size):
+                        # Telegram requiere que limit sea múltiplo de 1024
+                        # Y el máximo es típicamente 1MB (1024*1024)
+                        max_limit = 1024 * 1024  # 1MB máximo
+                        # Redondear hacia arriba al múltiplo de 1024 más cercano
+                        valid_limit = ((requested_size + 1023) // 1024) * 1024
+                        # Asegurar que no exceda el máximo
+                        valid_limit = min(valid_limit, max_limit)
+                        # Asegurar que sea al menos 1024 (mínimo válido)
+                        if valid_limit < 1024:
+                            valid_limit = 1024
+                        return valid_limit
+                    
+                    # Calcular limit válido para el chunk inicial
+                    valid_initial_limit = get_valid_limit(initial_size)
+                    print(f"🔍 Intentando GetFileRequest: offset=0, limit={valid_initial_limit} (solicitado: {initial_size}), file_id={document.id}")
                     result = await client(GetFileRequest(
                         location=file_location,
                         offset=0,
-                        limit=initial_size
+                        limit=valid_initial_limit
                     ))
                     
                     print(f"🔍 Resultado de GetFileRequest: tipo={type(result).__name__}, atributos={dir(result)}")
@@ -2116,11 +2151,13 @@ def get_video(video_id):
                         
                         while remaining > 0:
                             current_chunk_size = min(chunk_limit, remaining)
+                            # Asegurar que el limit sea múltiplo de 1024
+                            valid_chunk_limit = get_valid_limit(current_chunk_size)
                             try:
                                 result = await client(GetFileRequest(
                                     location=file_location,
                                     offset=current_offset,
-                                    limit=current_chunk_size
+                                    limit=valid_chunk_limit
                                 ))
                                 chunk_data = None
                                 if hasattr(result, 'bytes'):
@@ -2169,10 +2206,11 @@ def get_video(video_id):
                                 )
                                 print(f"✅ file_reference actualizado, reintentando GetFileRequest...")
                                 # Reintentar con file_reference actualizado
+                                retry_limit = get_valid_limit(min(1024 * 1024, initial_size))
                                 result = await client(GetFileRequest(
                                     location=file_location,
                                     offset=0,
-                                    limit=min(1024 * 1024, initial_size)  # Intentar con 1MB primero
+                                    limit=retry_limit
                                 ))
                                 data = None
                                 if hasattr(result, 'bytes'):

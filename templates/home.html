@@ -1118,14 +1118,16 @@
                     // Usar video_id del mensaje directamente (no extraer de URL)
                     const videoIdForThumbnail = videoIdFromMsg;
                     
-                    const thumbnailUrl = `/api/video/${videoIdForThumbnail}/thumbnail?_t=${Date.now()}`;
+                    // Agregar timestamp único para evitar caché (usar msg.id para que sea único por mensaje)
+                    const thumbnailUrl = `/api/video/${videoIdForThumbnail}/thumbnail?_t=${msg.id || Date.now()}`;
                     
                     console.log('🎬 Renderizando video:', {
                         'msg.id': msg.id,
                         'video_id': videoIdForThumbnail,
                         'video_url': msg.video_url,
                         'watch_url': watchUrl,
-                        'videoElementId': videoElementId
+                        'videoElementId': videoElementId,
+                        'thumbnailUrl': thumbnailUrl
                     });
                     
                     // Mostrar miniatura primero, video solo cuando se hace click (como Telegram Web)

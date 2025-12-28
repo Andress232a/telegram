@@ -144,16 +144,23 @@ def find_video_by_message(chat_id, message_id, phone):
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # Buscar por chat_id y message_id (phone no está en la tabla, se maneja en la app)
+                chat_id_str = str(chat_id) if chat_id != 'me' else 'me'
                 cursor.execute(
                     "SELECT video_id FROM videos WHERE chat_id = %s AND message_id = %s ORDER BY created_at DESC LIMIT 1",
-                    (str(chat_id), message_id)
+                    (chat_id_str, message_id)
                 )
                 result = cursor.fetchone()
                 if result:
-                    return result['video_id']
+                    video_id = result['video_id']
+                    print(f"🔍 Video encontrado: chat_id={chat_id_str}, message_id={message_id}, video_id={video_id}")
+                    return video_id
+                else:
+                    print(f"🔍 Video NO encontrado: chat_id={chat_id_str}, message_id={message_id}")
                 return None
     except Exception as e:
         print(f"❌ Error buscando video en DB: {e}")
+        import traceback
+        print(traceback.format_exc())
         return None
 
 def save_video_to_db(video_id, chat_id, message_id, filename, timestamp, file_size=None):
@@ -1137,7 +1144,7 @@ def get_messages(chat_id):
                                 print(f"🎬 Video detectado en mensaje {message.id}: mime_type={mime_type}")
                                 
                                 # Verificar si ya existe un video_id para este mensaje
-                                chat_id_str = str(chat_id)
+                                chat_id_str = str(chat_id) if chat_id != 'me' else 'me'
                                 existing_video_id = find_video_by_message(chat_id_str, message.id, phone)
                                 
                                 # Si no existe, crear uno nuevo
@@ -1154,9 +1161,10 @@ def get_messages(chat_id):
                                     timestamp = message.date.timestamp() if message.date else time.time()
                                     file_size = doc.size if hasattr(doc, 'size') else None
                                     
+                                    print(f"🆕 Creando nuevo video: chat_id={chat_id_str}, message_id={message.id}, video_id={video_id}")
                                     if save_video_to_db(video_id, chat_id_str, message.id, filename, timestamp, file_size):
                                         existing_video_id = video_id
-                                        print(f"✅ Video nuevo registrado: Message={message.id}, VideoID={existing_video_id}, Filename={filename}")
+                                        print(f"✅ Video nuevo registrado: Message={message.id}, Chat={chat_id_str}, VideoID={existing_video_id}, Filename={filename}")
                                     else:
                                         print(f"⚠️ Error guardando video en DB, pero continuando...")
                                         existing_video_id = video_id
@@ -1166,7 +1174,7 @@ def get_messages(chat_id):
                                 msg_info['video_url'] = f'/api/video/{existing_video_id}'
                                 msg_info['video_id'] = existing_video_id  # Agregar video_id directamente
                                 msg_info['watch_url'] = f'/watch/{existing_video_id}'
-                                print(f"✅ Video URL asignado: {msg_info['video_url']}, video_id: {existing_video_id}")
+                                print(f"✅ Video URL asignado para mensaje {message.id}: {msg_info['video_url']}, video_id: {existing_video_id}")
                                 
                                 # Pre-cargar video en memoria en segundo plano (como Telegram - instantáneo)
                                 def preload_video():

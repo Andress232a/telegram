@@ -1536,6 +1536,93 @@ def watch_video(video_id):
     
     return render_template('watch.html', video_id=video_id)
 
+@app.route('/api/video/<video_id>/thumbnail')
+def get_video_thumbnail(video_id):
+    """Obtener la miniatura del video (como Telegram Web)"""
+    video_info = get_video_from_db(video_id)
+    if not video_info:
+        return jsonify({'error': 'Video no encontrado'}), 404
+    
+    phone = session.get('phone')
+    if not phone:
+        return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
+    
+    try:
+        client = get_or_create_client(phone)
+        if not client or not client.is_connected():
+            return jsonify({'error': 'No se pudo conectar a Telegram'}), 500
+        
+        client_loop = client._loop
+        if not client_loop or client_loop.is_closed():
+            return jsonify({'error': 'Error de conexión'}), 500
+        
+        async def get_thumbnail():
+            chat_id = video_info.get('chat_id', 'me')
+            message_id = video_info['message_id']
+            target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+            
+            messages = await client.get_messages(target_chat, ids=message_id)
+            if not messages or not messages.media:
+                return None
+            
+            # Intentar obtener thumbnail del video
+            if hasattr(messages.media, 'document'):
+                document = messages.media.document
+                # Descargar thumbnail usando download_media con thumb=True
+                try:
+                    thumb_data = await client.download_media(messages, thumb=-1)  # -1 = thumbnail más grande disponible
+                    if thumb_data:
+                        if isinstance(thumb_data, bytes):
+                            return thumb_data
+                        elif isinstance(thumb_data, str):
+                            # Si es un path, leer el archivo
+                            with open(thumb_data, 'rb') as f:
+                                return f.read()
+                except Exception as e:
+                    print(f"⚠️ Error descargando thumbnail: {e}")
+                    # Si falla, intentar obtener el primer frame del video
+                    # Descargar solo los primeros bytes del video para extraer frame
+                    from telethon.tl.types import InputDocumentFileLocation
+                    from telethon.tl.functions.upload import GetFileRequest
+                    
+                    file_location = InputDocumentFileLocation(
+                        id=document.id,
+                        access_hash=document.access_hash,
+                        file_reference=document.file_reference,
+                        thumb_size=''
+                    )
+                    
+                    # Descargar primeros 2MB para extraer frame
+                    try:
+                        result = await client(GetFileRequest(
+                            location=file_location,
+                            offset=0,
+                            limit=2 * 1024 * 1024
+                        ))
+                        if hasattr(result, 'bytes'):
+                            return result.bytes[:1024 * 1024]  # Solo primeros 1MB para thumbnail
+                    except:
+                        pass
+            
+            return None
+        
+        try:
+            thumbnail_data = run_async(get_thumbnail(), client_loop, timeout=30)
+            if thumbnail_data:
+                return Response(thumbnail_data, mimetype='image/jpeg')
+            else:
+                # Si no hay thumbnail, devolver un placeholder
+                return jsonify({'error': 'No se pudo obtener la miniatura'}), 404
+        except Exception as e:
+            print(f"❌ Error obteniendo thumbnail: {e}")
+            return jsonify({'error': str(e)}), 500
+            
+    except Exception as e:
+        print(f"❌ Error en get_video_thumbnail: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/video/<video_id>')
 def get_video(video_id):
     """Obtener el video directamente desde la nube de Telegram (sin caché)"""

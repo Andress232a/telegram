@@ -999,6 +999,35 @@
         
         let currentVideoUrl = null;
         
+        // Función para cargar el video cuando el usuario hace click en la miniatura
+        function loadVideoOnClick(videoId, videoUrl) {
+            const videoEl = document.getElementById(videoId);
+            const thumbnailEl = document.getElementById(videoId + '-thumbnail');
+            
+            if (!videoEl) return;
+            
+            // Ocultar miniatura y mostrar video
+            if (thumbnailEl) {
+                thumbnailEl.style.display = 'none';
+            }
+            videoEl.style.display = 'block';
+            
+            // Cargar el video solo ahora
+            if (videoEl.readyState === 0) { // Si no se ha cargado nada
+                const source = videoEl.querySelector('source');
+                if (source && !source.src.includes('?')) {
+                    // Agregar timestamp para evitar caché
+                    source.src = videoUrl + '?_t=' + Date.now();
+                }
+                videoEl.load();
+            }
+            
+            // Intentar reproducir
+            videoEl.play().catch(e => {
+                console.log('Autoplay bloqueado:', e);
+            });
+        }
+        
         function renderMessages(messages) {
             const container = document.getElementById('messagesArea');
             if (messages.length === 0) {
@@ -1011,14 +1040,18 @@
                 const isOwn = msg.from_id === null || msg.from_id === 'None';
                 
                 let content = '';
-                // Si tiene video, mostrar video reproduciéndose (como Telegram)
+                // Si tiene video, mostrar miniatura primero (como Telegram Web)
                 if (msg.video_url) {
                     console.log('🎬 Renderizando video:', msg.video_url);
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
                     const videoId = `video-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    // Video reproduciéndose automáticamente (estilo Telegram)
+                    // Extraer video_id de la URL
+                    const videoIdFromUrl = msg.video_url.split('/').pop().split('?')[0];
+                    const thumbnailUrl = `/api/video/${videoIdFromUrl}/thumbnail`;
+                    
+                    // Mostrar miniatura primero, video solo cuando se hace click (como Telegram Web)
                     content = `
                         <div class="message-video-container" 
                              oncontextmenu="event.preventDefault(); showContextMenu(event, '${fullUrl}')"
@@ -1030,21 +1063,30 @@
                                  overflow: hidden;
                                  background: #000;
                                  margin: 8px 0;
+                                 cursor: pointer;
                              "
+                             onclick="loadVideoOnClick('${videoId}', '${msg.video_url}')"
                         >
+                            <img id="${videoId}-thumbnail" 
+                                 src="${thumbnailUrl}" 
+                                 style="
+                                     width: 100%;
+                                     height: auto;
+                                     display: block;
+                                     max-height: 500px;
+                                     object-fit: cover;
+                                 "
+                                 onerror="this.style.display='none'; document.getElementById('${videoId}').style.display='block';"
+                                 alt="Video thumbnail">
                             <video
                                 id="${videoId}"
                                 controls
-                                autoplay
-                                muted
-                                loop
                                 playsinline
-                                preload="auto"
-                                poster=""
+                                preload="none"
                                 style="
                                     width: 100%;
                                     height: auto;
-                                    display: block;
+                                    display: none;
                                     max-height: 500px;
                                     background: #000;
                                 "
@@ -1054,63 +1096,25 @@
                             </video>
                             <div style="
                                 position: absolute;
-                                bottom: 8px;
-                                right: 8px;
+                                top: 50%;
+                                left: 50%;
+                                transform: translate(-50%, -50%);
+                                width: 64px;
+                                height: 64px;
                                 background: rgba(0, 0, 0, 0.6);
-                                color: white;
-                                padding: 4px 8px;
-                                border-radius: 4px;
-                                font-size: 11px;
+                                border-radius: 50%;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
                                 pointer-events: none;
-                                display: none;
-                            ">🎬</div>
+                            ">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                            </div>
                         </div>
                     `;
-                    // Configurar el video después de que se renderice
-                    setTimeout(() => {
-                        const videoEl = document.getElementById(videoId);
-                        if (videoEl) {
-                            let retryCount = 0;
-                            const maxRetries = 3;
-                            let isLoading = false;
-                            
-                            // Función para recargar el video
-                            function reloadVideo() {
-                                if (isLoading || retryCount >= maxRetries) return;
-                                
-                                isLoading = true;
-                                retryCount++;
-                                console.log(`🔄 Reintentando cargar video ${videoId} (intento ${retryCount}/${maxRetries})`);
-                                
-                                // Guardar la URL original
-                                const originalSrc = videoEl.querySelector('source')?.src || videoEl.src;
-                                
-                                // Recargar el video
-                                videoEl.load();
-                                
-                                // Si después de 5 segundos no carga, reintentar
-                                const timeout = setTimeout(() => {
-                                    if (videoEl.readyState < 2) { // HAVE_CURRENT_DATA
-                                        console.log(`⏱️ Video ${videoId} no cargó en 5 segundos, reintentando...`);
-                                        // Agregar timestamp a la URL para forzar recarga
-                                        const separator = originalSrc.includes('?') ? '&' : '?';
-                                        const newSrc = originalSrc + separator + '_retry=' + Date.now();
-                                        if (videoEl.querySelector('source')) {
-                                            videoEl.querySelector('source').src = newSrc;
-                                        } else {
-                                            videoEl.src = newSrc;
-                                        }
-                                        videoEl.load();
-                                    }
-                                    isLoading = false;
-                                }, 5000);
-                                
-                                // Limpiar timeout si el video carga
-                                videoEl.addEventListener('loadeddata', function clearTimeout() {
-                                    clearTimeout(timeout);
-                                    isLoading = false;
-                                }, { once: true });
-                            }
+                    // El video se carga solo cuando el usuario hace click (loadVideoOnClick)
                             
                             // Asegurar que se reproduzca automáticamente cuando carga
                             videoEl.addEventListener('loadeddata', function() {

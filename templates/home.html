@@ -1046,6 +1046,44 @@
                 console.log('✅ Video ya está cargado (readyState:', videoEl.readyState, ')');
             }
             
+            // Manejar errores del video
+            videoEl.addEventListener('error', function(e) {
+                console.error('❌ Error en el video:', e);
+                const error = videoEl.error;
+                if (error) {
+                    let errorMsg = 'Error desconocido';
+                    switch (error.code) {
+                        case error.MEDIA_ERR_ABORTED:
+                            errorMsg = 'La carga del video fue cancelada';
+                            break;
+                        case error.MEDIA_ERR_NETWORK:
+                            errorMsg = 'Error de red al cargar el video';
+                            break;
+                        case error.MEDIA_ERR_DECODE:
+                            errorMsg = 'Error al decodificar el video';
+                            break;
+                        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                            errorMsg = 'El formato del video no es compatible';
+                            break;
+                    }
+                    console.error(`❌ Error del video (código ${error.code}): ${errorMsg}`);
+                    
+                    // Mostrar mensaje de error al usuario
+                    const errorDiv = document.createElement('div');
+                    errorDiv.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,0,0,0.8); color: white; padding: 10px; border-radius: 5px; text-align: center; z-index: 10;';
+                    errorDiv.textContent = `Error: ${errorMsg}`;
+                    videoEl.parentElement.style.position = 'relative';
+                    videoEl.parentElement.appendChild(errorDiv);
+                    
+                    // Intentar recargar después de 3 segundos
+                    setTimeout(() => {
+                        errorDiv.remove();
+                        console.log('🔄 Reintentando cargar video...');
+                        videoEl.load();
+                    }, 3000);
+                }
+            });
+            
             // Intentar reproducir
             videoEl.play().catch(e => {
                 console.log('Autoplay bloqueado:', e);

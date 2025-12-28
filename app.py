@@ -1643,17 +1643,14 @@ def get_video(video_id):
                             thumb_size=''
                         )
                         
-                        # Usar GetFileRequest para descargar solo el rango necesario
-                        # Esto es MUCHO más rápido que descargar todo el archivo
-                        result = await client(GetFileRequest(
-                            location=file_location,
-                            offset=start,
-                            limit=chunk_size
-                        ))
-                        
-                        if result and hasattr(result, 'bytes'):
-                            return result.bytes
-                        return None
+                        # Descargar el rango necesario
+                        # Por ahora, descargar completo pero solo servir el rango solicitado
+                        # Esto funciona de manera confiable
+                        buffer = BytesIO()
+                        await client.download_media(messages, buffer)
+                        buffer.seek(start)
+                        chunk_data = buffer.read(chunk_size)
+                        return chunk_data
                     return None
                 
                 # Timeout dinámico (más corto porque solo descargamos un chunk)
@@ -1697,15 +1694,13 @@ def get_video(video_id):
                     thumb_size=''
                 )
                 
-                # Descargar solo los primeros bytes necesarios para metadata
-                result = await client(GetFileRequest(
-                    location=file_location,
-                    offset=0,
-                    limit=initial_size
-                ))
-                
-                if result and hasattr(result, 'bytes'):
-                    return result.bytes
+                # Descargar los primeros bytes necesarios para metadata
+                # Descargar completo pero solo servir los primeros bytes
+                buffer = BytesIO()
+                await client.download_media(messages, buffer)
+                buffer.seek(0)
+                initial_data = buffer.read(initial_size)
+                return initial_data
             return None
         
         try:

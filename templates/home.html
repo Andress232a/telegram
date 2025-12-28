@@ -1497,21 +1497,72 @@
                 return;
             }
             
-            // Obtener el chat actual (con fallback al DOM)
-            const chatId = getCurrentChatId();
-            console.log('🔍 Verificando chat para subir video. chatId:', chatId, 'currentChatId:', currentChatId);
+            // PRIMERO: Intentar usar currentChatId directamente (más confiable)
+            let chatId = currentChatId;
+            console.log('🔍 [showVideoUploadModal] currentChatId inicial:', chatId);
+            
+            // Si no hay currentChatId, intentar obtenerlo de múltiples formas
+            if (!chatId) {
+                // 1. Buscar elemento activo en DOM
+                const activeChatItem = document.querySelector('.chat-item.active');
+                if (activeChatItem) {
+                    chatId = activeChatItem.getAttribute('data-chat-id');
+                    console.log('🔍 [showVideoUploadModal] Chat encontrado en elemento activo:', chatId);
+                }
+                
+                // 2. Si aún no hay, verificar si el header está visible (significa que hay un chat seleccionado)
+                if (!chatId) {
+                    const chatHeader = document.getElementById('chatHeader');
+                    const isHeaderVisible = chatHeader && chatHeader.style.display !== 'none' && chatHeader.style.display !== '';
+                    console.log('🔍 [showVideoUploadModal] Header visible:', isHeaderVisible);
+                    
+                    if (isHeaderVisible) {
+                        // Buscar en todos los chats por el nombre del header
+                        const headerName = document.getElementById('chatHeaderName')?.textContent.trim();
+                        console.log('🔍 [showVideoUploadModal] Nombre en header:', headerName);
+                        
+                        if (headerName) {
+                            // Buscar en la lista de chats cargados
+                            const foundChat = chats.find(chat => {
+                                const cleanChatName = chat.name?.trim();
+                                const cleanHeaderName = headerName.replace(/✓/g, '').replace(/\s+/g, ' ').trim();
+                                return cleanChatName === cleanHeaderName || cleanChatName?.includes(cleanHeaderName) || cleanHeaderName.includes(cleanChatName);
+                            });
+                            
+                            if (foundChat) {
+                                chatId = foundChat.id;
+                                console.log('🔍 [showVideoUploadModal] Chat encontrado por nombre en lista:', chatId);
+                            } else {
+                                // Buscar en el DOM por nombre
+                                const allChatItems = document.querySelectorAll('.chat-item[data-chat-id]');
+                                for (let item of allChatItems) {
+                                    const chatNameElement = item.querySelector('.chat-name');
+                                    if (chatNameElement) {
+                                        const chatName = chatNameElement.textContent.trim().replace(/✓/g, '').replace(/\s+/g, ' ').trim();
+                                        const cleanHeaderName = headerName.replace(/✓/g, '').replace(/\s+/g, ' ').trim();
+                                        if (chatName === cleanHeaderName || chatName.includes(cleanHeaderName) || cleanHeaderName.includes(chatName)) {
+                                            chatId = item.getAttribute('data-chat-id');
+                                            console.log('🔍 [showVideoUploadModal] Chat encontrado en DOM por nombre:', chatId);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            console.log('🔍 [showVideoUploadModal] Chat ID final:', chatId);
             
             if (!chatId) {
                 alert('Selecciona un chat primero. Haz clic en un chat de la lista para seleccionarlo.');
                 return;
             }
             
-            // Asegurarse de que currentChatId esté actualizado
-            if (currentChatId !== chatId) {
-                currentChatId = chatId;
-            }
-            
-            console.log('✅ Chat verificado, mostrando modal. currentChatId:', currentChatId);
+            // ACTUALIZAR currentChatId para futuras referencias
+            currentChatId = chatId;
+            console.log('✅ [showVideoUploadModal] Chat verificado y actualizado. currentChatId:', currentChatId);
             
             selectedVideoFile = file;
             
@@ -1544,12 +1595,27 @@
                 return;
             }
             
-            // Verificar nuevamente el chat antes de subir
-            if (!currentChatId) {
+            // Verificar el chat - usar currentChatId directamente primero
+            let chatId = currentChatId;
+            
+            // Si no hay, intentar obtenerlo de nuevo
+            if (!chatId) {
+                const activeChatItem = document.querySelector('.chat-item.active');
+                if (activeChatItem) {
+                    chatId = activeChatItem.getAttribute('data-chat-id');
+                    currentChatId = chatId;
+                }
+            }
+            
+            if (!chatId) {
                 alert('Error: No hay chat seleccionado. Por favor, selecciona un chat primero.');
                 closeVideoUploadModal();
                 return;
             }
+            
+            // Asegurar que currentChatId esté actualizado
+            currentChatId = chatId;
+            console.log('✅ [confirmVideoUpload] Subiendo video a chat:', currentChatId);
             
             // Cerrar el modal
             closeVideoUploadModal();
@@ -1563,18 +1629,44 @@
         
         // Función para subir video
         async function uploadVideo(file, description = '') {
-            if (!file || !currentChatId) {
+            // Verificar que tenemos un chat válido
+            let chatId = currentChatId;
+            
+            // Si no hay, intentar obtenerlo una última vez
+            if (!chatId) {
+                const activeChatItem = document.querySelector('.chat-item.active');
+                if (activeChatItem) {
+                    chatId = activeChatItem.getAttribute('data-chat-id');
+                    currentChatId = chatId;
+                }
+            }
+            
+            if (!file || !chatId) {
                 alert('Selecciona un chat primero');
                 return;
             }
+            
+            // Asegurar que currentChatId esté actualizado
+            currentChatId = chatId;
+            console.log('✅ [uploadVideo] Subiendo video a chat:', currentChatId);
             
             // Mostrar progreso inmediatamente
             showUploadProgress();
             updateUploadProgress(0, 'uploading');
             
+            // Asegurar que tenemos el chat_id correcto
+            const chatIdToUse = currentChatId || chatId;
+            console.log('📤 [uploadVideo] Usando chat_id:', chatIdToUse, 'currentChatId:', currentChatId, 'chatId param:', chatId);
+            
+            if (!chatIdToUse) {
+                alert('Error: No se pudo determinar el chat. Por favor, selecciona un chat primero.');
+                closeUploadProgress();
+                return;
+            }
+            
             const formData = new FormData();
             formData.append('video', file);
-            formData.append('chat_id', currentChatId);
+            formData.append('chat_id', chatIdToUse);
             if (description) {
                 formData.append('description', description);
             }

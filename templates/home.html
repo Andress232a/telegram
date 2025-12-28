@@ -1068,17 +1068,115 @@
                     setTimeout(() => {
                         const videoEl = document.getElementById(videoId);
                         if (videoEl) {
-                            // Asegurar que se reproduzca automáticamente
+                            let retryCount = 0;
+                            const maxRetries = 3;
+                            let isLoading = false;
+                            
+                            // Función para recargar el video
+                            function reloadVideo() {
+                                if (isLoading || retryCount >= maxRetries) return;
+                                
+                                isLoading = true;
+                                retryCount++;
+                                console.log(`🔄 Reintentando cargar video ${videoId} (intento ${retryCount}/${maxRetries})`);
+                                
+                                // Guardar la URL original
+                                const originalSrc = videoEl.querySelector('source')?.src || videoEl.src;
+                                
+                                // Recargar el video
+                                videoEl.load();
+                                
+                                // Si después de 5 segundos no carga, reintentar
+                                const timeout = setTimeout(() => {
+                                    if (videoEl.readyState < 2) { // HAVE_CURRENT_DATA
+                                        console.log(`⏱️ Video ${videoId} no cargó en 5 segundos, reintentando...`);
+                                        // Agregar timestamp a la URL para forzar recarga
+                                        const separator = originalSrc.includes('?') ? '&' : '?';
+                                        const newSrc = originalSrc + separator + '_retry=' + Date.now();
+                                        if (videoEl.querySelector('source')) {
+                                            videoEl.querySelector('source').src = newSrc;
+                                        } else {
+                                            videoEl.src = newSrc;
+                                        }
+                                        videoEl.load();
+                                    }
+                                    isLoading = false;
+                                }, 5000);
+                                
+                                // Limpiar timeout si el video carga
+                                videoEl.addEventListener('loadeddata', function clearTimeout() {
+                                    clearTimeout(timeout);
+                                    isLoading = false;
+                                }, { once: true });
+                            }
+                            
+                            // Asegurar que se reproduzca automáticamente cuando carga
                             videoEl.addEventListener('loadeddata', function() {
+                                isLoading = false;
+                                retryCount = 0; // Reset contador si carga bien
+                                console.log(`✅ Video ${videoId} cargado correctamente`);
                                 videoEl.play().catch(e => {
                                     console.log('Autoplay bloqueado, pero el video está listo:', e);
                                 });
                             });
                             
-                            // Manejar errores
-                            videoEl.addEventListener('error', function(e) {
-                                console.error('Error en video:', videoId, videoEl.error);
+                            // Detectar cuando el video está esperando datos (buffering)
+                            videoEl.addEventListener('waiting', function() {
+                                console.log(`⏳ Video ${videoId} esperando datos (buffering)...`);
                             });
+                            
+                            // Detectar cuando el video está reproduciéndose
+                            videoEl.addEventListener('playing', function() {
+                                console.log(`▶️ Video ${videoId} reproduciéndose`);
+                                retryCount = 0; // Reset contador si está reproduciendo
+                            });
+                            
+                            // Manejar errores con reintentos automáticos
+                            videoEl.addEventListener('error', function(e) {
+                                const error = videoEl.error;
+                                console.error(`❌ Error en video ${videoId}:`, error);
+                                
+                                if (error) {
+                                    switch(error.code) {
+                                        case error.MEDIA_ERR_ABORTED:
+                                            console.log('⚠️ Carga abortada, reintentando...');
+                                            if (retryCount < maxRetries) {
+                                                setTimeout(() => reloadVideo(), 1000);
+                                            }
+                                            break;
+                                        case error.MEDIA_ERR_NETWORK:
+                                            console.log('⚠️ Error de red, reintentando...');
+                                            if (retryCount < maxRetries) {
+                                                setTimeout(() => reloadVideo(), 2000);
+                                            }
+                                            break;
+                                        case error.MEDIA_ERR_DECODE:
+                                            console.error('❌ Error de decodificación (formato no compatible)');
+                                            break;
+                                        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                                            console.error('❌ Formato no soportado');
+                                            break;
+                                    }
+                                }
+                            });
+                            
+                            // Detectar si el video se queda "stuck" (cargando pero nunca carga)
+                            let stuckCheckInterval = setInterval(() => {
+                                // Si el video está en estado de carga pero no progresa después de 10 segundos
+                                if (videoEl.readyState === 0 && !isLoading) {
+                                    const timeSinceLoad = Date.now() - (videoEl.dataset.loadStart || Date.now());
+                                    if (timeSinceLoad > 10000) {
+                                        console.log(`⚠️ Video ${videoId} parece estar atascado, reintentando...`);
+                                        reloadVideo();
+                                    }
+                                } else if (videoEl.readyState >= 2) {
+                                    // Si el video tiene datos, limpiar el check
+                                    clearInterval(stuckCheckInterval);
+                                }
+                            }, 5000);
+                            
+                            // Guardar timestamp de inicio de carga
+                            videoEl.dataset.loadStart = Date.now();
                             
                             // Intentar reproducir automáticamente
                             videoEl.play().catch(e => {

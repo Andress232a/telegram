@@ -73,27 +73,93 @@
     <script>
         const videoElement = document.getElementById('videoPlayer');
         const errorDiv = document.getElementById('error');
+        let retryCount = 0;
+        const maxRetries = 3;
+        let isLoading = false;
+        
+        // Función para recargar el video
+        function reloadVideo() {
+            if (isLoading || retryCount >= maxRetries) {
+                if (retryCount >= maxRetries) {
+                    errorDiv.innerHTML = '<strong>Error: No se pudo cargar el video después de varios intentos.</strong><br><small>Por favor, recarga la página.</small>';
+                    errorDiv.style.display = 'block';
+                }
+                return;
+            }
+            
+            isLoading = true;
+            retryCount++;
+            console.log(`🔄 Reintentando cargar video (intento ${retryCount}/${maxRetries})`);
+            errorDiv.innerHTML = `<strong>Reintentando cargar video... (${retryCount}/${maxRetries})</strong>`;
+            errorDiv.style.display = 'block';
+            
+            // Agregar timestamp a la URL para forzar recarga
+            const originalSrc = videoElement.querySelector('source')?.src || videoElement.src;
+            const separator = originalSrc.includes('?') ? '&' : '?';
+            const newSrc = originalSrc + separator + '_retry=' + Date.now();
+            
+            if (videoElement.querySelector('source')) {
+                videoElement.querySelector('source').src = newSrc;
+            } else {
+                videoElement.src = newSrc;
+            }
+            
+            videoElement.load();
+            
+            // Si después de 10 segundos no carga, reintentar
+            const timeout = setTimeout(() => {
+                if (videoElement.readyState < 2) {
+                    console.log('⏱️ Video no cargó en 10 segundos, reintentando...');
+                    reloadVideo();
+                } else {
+                    isLoading = false;
+                }
+            }, 10000);
+            
+            // Limpiar timeout si el video carga
+            videoElement.addEventListener('loadeddata', function clearTimeout() {
+                clearTimeout(timeout);
+                isLoading = false;
+            }, { once: true });
+        }
         
         // Configurar exactamente igual que en el chat
         videoElement.addEventListener('loadeddata', function() {
+            isLoading = false;
+            retryCount = 0; // Reset contador si carga bien
             errorDiv.style.display = 'none';
-            console.log('Video cargado correctamente');
+            console.log('✅ Video cargado correctamente');
             // Intentar reproducir automáticamente
             videoElement.play().catch(e => {
                 console.log('Autoplay bloqueado, pero el video está listo:', e);
             });
         });
         
+        videoElement.addEventListener('waiting', function() {
+            console.log('⏳ Video esperando datos (buffering)...');
+        });
+        
+        videoElement.addEventListener('playing', function() {
+            console.log('▶️ Video reproduciéndose');
+            retryCount = 0; // Reset contador si está reproduciendo
+        });
+        
         videoElement.addEventListener('error', function(e) {
             const error = videoElement.error;
-            let errorMsg = 'Error al cargar el video. Por favor, intenta más tarde.';
+            let errorMsg = 'Error al cargar el video. Reintentando...';
             if (error) {
                 switch(error.code) {
                     case error.MEDIA_ERR_ABORTED:
-                        errorMsg = 'La carga del video fue cancelada.';
+                        errorMsg = 'La carga del video fue cancelada. Reintentando...';
+                        if (retryCount < maxRetries) {
+                            setTimeout(() => reloadVideo(), 1000);
+                        }
                         break;
                     case error.MEDIA_ERR_NETWORK:
-                        errorMsg = 'Error de red al cargar el video. Verifica tu conexión.';
+                        errorMsg = 'Error de red al cargar el video. Reintentando...';
+                        if (retryCount < maxRetries) {
+                            setTimeout(() => reloadVideo(), 2000);
+                        }
                         break;
                     case error.MEDIA_ERR_DECODE:
                         errorMsg = 'Error al decodificar el video. El formato puede no ser compatible.';
@@ -105,8 +171,24 @@
             }
             errorDiv.innerHTML = `<strong>${errorMsg}</strong><br><small>URL: /api/video/{{ video_id }}</small>`;
             errorDiv.style.display = 'block';
-            console.error('Error de video:', error);
+            console.error('❌ Error de video:', error);
         });
+        
+        // Detectar si el video se queda "stuck" (cargando pero nunca carga)
+        let stuckCheckInterval = setInterval(() => {
+            if (videoElement.readyState === 0 && !isLoading) {
+                const timeSinceLoad = Date.now() - (videoElement.dataset.loadStart || Date.now());
+                if (timeSinceLoad > 10000) {
+                    console.log('⚠️ Video parece estar atascado, reintentando...');
+                    reloadVideo();
+                }
+            } else if (videoElement.readyState >= 2) {
+                clearInterval(stuckCheckInterval);
+            }
+        }, 5000);
+        
+        // Guardar timestamp de inicio de carga
+        videoElement.dataset.loadStart = Date.now();
         
         // Intentar reproducir automáticamente
         videoElement.play().catch(e => {

@@ -1764,21 +1764,55 @@ def get_video(video_id):
                                 print(f"✅ GetFileRequest range exitoso: {len(data)} bytes descargados (rango {start}-{start+len(data)-1})")
                                 return data
                             else:
-                                # Fallback: descargar completo si GetFileRequest no funciona
-                                print(f"⚠️ GetFileRequest no devolvió bytes válidos, usando fallback")
+                                # Fallback: intentar con chunks más pequeños si el chunk grande falla
+                                # Para videos muy grandes, dividir en chunks de 1MB
+                                print(f"⚠️ GetFileRequest no devolvió bytes válidos, intentando con chunks más pequeños")
+                                chunk_limit = min(1024 * 1024, chunk_size)  # Máximo 1MB por chunk
                                 buffer = BytesIO()
-                                await client.download_media(messages, buffer)
-                                buffer.seek(start)
-                                return buffer.read(chunk_size)
+                                current_offset = start
+                                remaining = chunk_size
+                                
+                                while remaining > 0:
+                                    current_chunk_size = min(chunk_limit, remaining)
+                                    try:
+                                        result = await client(GetFileRequest(
+                                            location=file_location,
+                                            offset=current_offset,
+                                            limit=current_chunk_size
+                                        ))
+                                        chunk_data = None
+                                        if hasattr(result, 'bytes'):
+                                            chunk_data = result.bytes
+                                        elif hasattr(result, 'data'):
+                                            chunk_data = result.data
+                                        elif isinstance(result, bytes):
+                                            chunk_data = result
+                                        
+                                        if chunk_data and len(chunk_data) > 0:
+                                            buffer.write(chunk_data)
+                                            current_offset += len(chunk_data)
+                                            remaining -= len(chunk_data)
+                                        else:
+                                            print(f"⚠️ Chunk en offset {current_offset} no devolvió datos")
+                                            break
+                                    except Exception as chunk_error:
+                                        print(f"⚠️ Error descargando chunk en offset {current_offset}: {chunk_error}")
+                                        break
+                                
+                                if buffer.tell() > 0:
+                                    buffer.seek(0)
+                                    return buffer.read()
+                                else:
+                                    raise Exception("No se pudo descargar ningún chunk del rango solicitado")
                         except Exception as e:
-                            print(f"⚠️ Error con GetFileRequest: {e}, usando fallback")
+                            print(f"⚠️ Error con GetFileRequest: {e}")
                             import traceback
                             print(traceback.format_exc())
-                            # Fallback: descargar completo si GetFileRequest falla
-                            buffer = BytesIO()
-                            await client.download_media(messages, buffer)
-                            buffer.seek(start)
-                            return buffer.read(chunk_size)
+                            # Para videos muy grandes, NO intentar descargar todo - solo lanzar error descriptivo
+                            if file_size > 1024 * 1024 * 1024:  # > 1GB
+                                raise Exception(f"No se pudo descargar el rango del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {str(e)}")
+                            else:
+                                raise e
                     return None
                 
                 # Timeout dinámico (más corto porque solo descargamos un chunk)
@@ -1809,15 +1843,19 @@ def get_video(video_id):
         async def download_initial_chunk():
             # Para videos pesados, necesitamos un chunk inicial más grande para que el navegador
             # tenga suficiente información para empezar a reproducir mientras descarga el resto
-            # Usamos 5MB para videos grandes, 3MB para medianos, y 1MB para pequeños
-            if file_size > 50 * 1024 * 1024:  # Videos > 50MB
+            # Para videos de 4GB+, usamos chunks más grandes para mejor experiencia
+            if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB (muy pesados)
+                initial_size = min(20 * 1024 * 1024, file_size)  # 20MB para videos muy grandes
+            elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
+                initial_size = min(10 * 1024 * 1024, file_size)  # 10MB para videos grandes
+            elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
                 initial_size = min(5 * 1024 * 1024, file_size)  # 5MB
             elif file_size > 10 * 1024 * 1024:  # Videos > 10MB
                 initial_size = min(3 * 1024 * 1024, file_size)  # 3MB
             else:
                 initial_size = min(1024 * 1024, file_size)  # 1MB
             
-            print(f"📊 Descargando chunk inicial de {initial_size / (1024*1024):.2f}MB para video de {file_size / (1024*1024):.2f}MB")
+            print(f"📊 Descargando chunk inicial de {initial_size / (1024*1024):.2f}MB para video de {file_size / (1024*1024):.2f}MB ({file_size / (1024*1024*1024):.2f}GB)")
             
             # Usar GetFileRequest para descargar solo los primeros bytes (MUCHO más rápido)
             if hasattr(messages.media, 'document'):
@@ -1856,25 +1894,68 @@ def get_video(video_id):
                         print(f"✅ GetFileRequest exitoso: {len(data)} bytes descargados")
                         return data
                     else:
-                        # Fallback: descargar completo si GetFileRequest no funciona
-                        print(f"⚠️ GetFileRequest no devolvió bytes válidos, usando fallback")
+                        # Fallback: intentar con chunks más pequeños si el chunk grande falla
+                        print(f"⚠️ GetFileRequest no devolvió bytes válidos, intentando con chunks más pequeños para chunk inicial")
+                        chunk_limit = min(1024 * 1024, initial_size)  # Máximo 1MB por chunk
                         buffer = BytesIO()
-                        await client.download_media(messages, buffer)
-                        buffer.seek(0)
-                        return buffer.read(initial_size)
+                        current_offset = 0
+                        remaining = initial_size
+                        
+                        while remaining > 0:
+                            current_chunk_size = min(chunk_limit, remaining)
+                            try:
+                                result = await client(GetFileRequest(
+                                    location=file_location,
+                                    offset=current_offset,
+                                    limit=current_chunk_size
+                                ))
+                                chunk_data = None
+                                if hasattr(result, 'bytes'):
+                                    chunk_data = result.bytes
+                                elif hasattr(result, 'data'):
+                                    chunk_data = result.data
+                                elif isinstance(result, bytes):
+                                    chunk_data = result
+                                
+                                if chunk_data and len(chunk_data) > 0:
+                                    buffer.write(chunk_data)
+                                    current_offset += len(chunk_data)
+                                    remaining -= len(chunk_data)
+                                else:
+                                    print(f"⚠️ Chunk inicial en offset {current_offset} no devolvió datos")
+                                    break
+                            except Exception as chunk_error:
+                                print(f"⚠️ Error descargando chunk inicial en offset {current_offset}: {chunk_error}")
+                                break
+                        
+                        if buffer.tell() > 0:
+                            buffer.seek(0)
+                            return buffer.read()
+                        else:
+                            raise Exception("No se pudo descargar el chunk inicial del video")
                 except Exception as e:
-                    print(f"⚠️ Error con GetFileRequest en chunk inicial: {e}, usando fallback")
+                    print(f"⚠️ Error con GetFileRequest en chunk inicial: {e}")
                     import traceback
                     print(traceback.format_exc())
-                    # Fallback: descargar completo si GetFileRequest falla
-                    buffer = BytesIO()
-                    await client.download_media(messages, buffer)
-                    buffer.seek(0)
-                    return buffer.read(initial_size)
+                    # Para videos muy grandes, NO intentar descargar todo - solo lanzar error descriptivo
+                    if file_size > 1024 * 1024 * 1024:  # > 1GB
+                        raise Exception(f"No se pudo descargar el chunk inicial del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {str(e)}")
+                    else:
+                        raise e
             return None
         
+        # Timeout dinámico basado en el tamaño del video
+        # Para videos muy grandes (4GB+), necesitamos más tiempo
+        if file_size > 2 * 1024 * 1024 * 1024:  # > 2GB
+            timeout_initial = 180  # 3 minutos para videos muy grandes
+        elif file_size > 500 * 1024 * 1024:  # > 500MB
+            timeout_initial = 120  # 2 minutos
+        else:
+            timeout_initial = 60  # 1 minuto para videos normales
+        
         try:
-            initial_data = run_async(download_initial_chunk(), client_loop, timeout=60)
+            print(f"⏱️ Timeout configurado: {timeout_initial}s para video de {file_size / (1024*1024*1024):.2f}GB")
+            initial_data = run_async(download_initial_chunk(), client_loop, timeout=timeout_initial)
             
             if initial_data:
                 headers = {

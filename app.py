@@ -1004,11 +1004,10 @@ def get_or_create_client(phone):
         if client:
             # PRIMERO verificar que el loop no esté cerrado
             if loop and not loop.is_closed():
-                # El loop es válido, verificar conexión
+                # El loop es válido, verificar conexión (is_connected es síncrono)
                 try:
-                    # Usar el loop válido para verificar la conexión
-                    is_connected = run_async(client.is_connected(), loop, timeout=5)
-                    if is_connected:
+                    # is_connected() es un método síncrono, no una corrutina
+                    if client.is_connected():
                         # Cliente válido y conectado, retornarlo
                         return client
                     else:
@@ -1016,6 +1015,7 @@ def get_or_create_client(phone):
                         # Intentar reconectar
                         try:
                             run_async(client.connect(), loop, timeout=10)
+                            # Verificar nuevamente (síncrono)
                             if client.is_connected():
                                 return client
                         except Exception as e:
@@ -1026,7 +1026,8 @@ def get_or_create_client(phone):
                     print(f"⚠️ Error verificando conexión del cliente: {e}")
                     # Si hay error, el cliente puede estar en mal estado, crear uno nuevo
                     try:
-                        if client.is_connected():
+                        # Intentar desconectar de forma segura
+                        if hasattr(client, 'is_connected') and client.is_connected():
                             try:
                                 run_async(client.disconnect(), loop, timeout=5)
                             except:

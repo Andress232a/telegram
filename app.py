@@ -1657,8 +1657,7 @@ def get_video(video_id):
             # NO cargar configuración guardada globalmente
             # Si no hay sesión activa, el usuario debe iniciar sesión
             return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
-    
-    try:
+        
         # Verificar que la sesión es válida para este usuario
         if 'phone' not in session:
             return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401

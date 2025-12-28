@@ -768,14 +768,22 @@ def get_chats():
         # Obtener cliente de forma segura
         client = get_or_create_client(phone)
         
-        # Verificar y obtener el loop del cliente
+        # Obtener el loop del cliente - NO intentar cambiarlo si el cliente está conectado
         client_loop = client._loop
         if not client_loop or client_loop.is_closed():
-            print(f"⚠️ Loop del cliente cerrado o no disponible, obteniendo uno nuevo...")
-            client_loop = get_event_loop()
-            # Actualizar el loop del cliente
+            print(f"⚠️ Loop del cliente cerrado, necesitamos recrear el cliente...")
+            # Si el loop está cerrado, necesitamos recrear el cliente
+            # Limpiar el cliente actual
+            try:
+                if client.is_connected():
+                    run_async(client.disconnect(), client_loop if client_loop and not client_loop.is_closed() else get_event_loop(), timeout=5)
+            except:
+                pass
             if phone in telegram_clients:
-                telegram_clients[phone]['loop'] = client_loop
+                del telegram_clients[phone]
+            # Obtener un nuevo cliente
+            client = get_or_create_client(phone)
+            client_loop = client._loop
         
         async def fetch_chats_and_folders():
             chats = []
@@ -1060,14 +1068,22 @@ def get_messages(chat_id):
         # Obtener cliente de forma segura
         client = get_or_create_client(phone)
         
-        # Verificar y obtener el loop del cliente
+        # Obtener el loop del cliente - NO intentar cambiarlo si el cliente está conectado
         client_loop = client._loop
         if not client_loop or client_loop.is_closed():
-            print(f"⚠️ Loop del cliente cerrado o no disponible, obteniendo uno nuevo...")
-            client_loop = get_event_loop()
-            # Actualizar el loop del cliente
+            print(f"⚠️ Loop del cliente cerrado, necesitamos recrear el cliente...")
+            # Si el loop está cerrado, necesitamos recrear el cliente
+            # Limpiar el cliente actual
+            try:
+                if client.is_connected():
+                    run_async(client.disconnect(), client_loop if client_loop and not client_loop.is_closed() else get_event_loop(), timeout=5)
+            except:
+                pass
             if phone in telegram_clients:
-                telegram_clients[phone]['loop'] = client_loop
+                del telegram_clients[phone]
+            # Obtener un nuevo cliente
+            client = get_or_create_client(phone)
+            client_loop = client._loop
         
         async def fetch_messages():
             messages = []

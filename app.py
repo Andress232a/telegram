@@ -2188,6 +2188,8 @@ def get_video(video_id):
                         except Exception as retry_error:
                             print(f"⚠️ Error en reintento con file_reference actualizado: {retry_error}")
                     
+                    # No hay fallback viable - GetFileRequest es la única forma de streaming progresivo
+                    # Si falla, el error ya fue manejado arriba con reintentos de file_reference
                     # Para videos muy grandes, NO intentar descargar todo - solo lanzar error descriptivo
                     if file_size > 1024 * 1024 * 1024:  # > 1GB
                         raise Exception(f"No se pudo descargar el chunk inicial del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {error_type}: {error_msg}")

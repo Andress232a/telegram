@@ -1309,6 +1309,9 @@ def upload_video():
     
     # Obtener valores de la sesión ANTES de crear el thread
     phone = session['phone']
+    api_id = int(session['api_id'])
+    api_hash = session['api_hash']
+    session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
     
     # Inicializar progreso ANTES de guardar el archivo
     upload_progress[upload_id] = {'progress': 0, 'status': 'uploading', 'current': 0, 'total': 0}
@@ -1325,7 +1328,7 @@ def upload_video():
     
     # Devolver upload_id INMEDIATAMENTE para que el frontend pueda monitorear
     # La subida se ejecutará en segundo plano
-    def upload_in_background(phone_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
+    def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
             # Asegurarse de que el upload_id existe ANTES de comenzar la subida
             if upload_id_param not in upload_progress:
@@ -1348,28 +1351,10 @@ def upload_video():
             # porque puede causar problemas con el event loop. Necesitamos crear un cliente nuevo
             # en este thread con su propio loop.
             
-            # Obtener datos de la sesión desde el diccionario de clientes
-            session_name = f"sessions/{secure_filename(phone_param)}"
-            api_id = None
-            api_hash = None
-            
-            # Intentar obtener de telegram_clients si existe
-            if phone_param in telegram_clients:
-                client_data = telegram_clients[phone_param]
-                api_id = client_data.get('api_id')
-                api_hash = client_data.get('api_hash')
-                session_name = client_data.get('session_name', session_name)
-            
-            # Si no tenemos los datos, no podemos continuar
-            if not api_id or not api_hash:
-                print(f"❌ No se pudieron obtener api_id/api_hash en thread de background")
-                raise Exception("No se pudieron obtener las credenciales de API en el thread de background")
-            
-            # Crear un nuevo cliente en este thread con su propio loop
-            # Esto evita problemas con el event loop del cliente principal
+            # Usar las credenciales pasadas como parámetros (obtenidas de la sesión antes de crear el thread)
             print(f"🔄 Creando cliente nuevo en thread de background para subida...")
             loop = get_event_loop()
-            client = TelegramClient(session_name, api_id, api_hash, loop=loop)
+            client = TelegramClient(session_name_param, api_id_param, api_hash_param, loop=loop)
             
             # Conectar el cliente
             if not client.is_connected():
@@ -1505,7 +1490,7 @@ def upload_video():
     import threading
     upload_thread = threading.Thread(
         target=upload_in_background, 
-        args=(phone, chat_id, local_path, filename, upload_id, timestamp, file_size, description),
+        args=(phone, api_id, api_hash, session_name, chat_id, local_path, filename, upload_id, timestamp, file_size, description),
         daemon=True
     )
     upload_thread.start()

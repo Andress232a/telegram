@@ -1723,13 +1723,15 @@ def get_video(video_id):
                 
                 chunk_size = end - start + 1
                 
-                # Descargar solo el rango solicitado usando GetFileRequest (más eficiente)
+                # Descargar solo el rango solicitado usando GetFileRequest (streaming progresivo real)
                 async def download_range():
                     # Obtener el InputFileLocation del documento
                     if hasattr(messages.media, 'document'):
                         document = messages.media.document
                         # Obtener el InputDocumentFileLocation
                         from telethon.tl.types import InputDocumentFileLocation
+                        from telethon.tl.functions.upload import GetFileRequest
+                        
                         file_location = InputDocumentFileLocation(
                             id=document.id,
                             access_hash=document.access_hash,
@@ -1737,14 +1739,33 @@ def get_video(video_id):
                             thumb_size=''
                         )
                         
-                        # Descargar el rango necesario
-                        # Por ahora, descargar completo pero solo servir el rango solicitado
-                        # Esto funciona de manera confiable
-                        buffer = BytesIO()
-                        await client.download_media(messages, buffer)
-                        buffer.seek(start)
-                        chunk_data = buffer.read(chunk_size)
-                        return chunk_data
+                        # Descargar SOLO el rango solicitado usando GetFileRequest
+                        # Esto permite streaming progresivo real - el video empieza a reproducirse inmediatamente
+                        try:
+                            result = await client(GetFileRequest(
+                                location=file_location,
+                                offset=start,
+                                limit=chunk_size
+                            ))
+                            
+                            if hasattr(result, 'bytes'):
+                                return result.bytes
+                            elif hasattr(result, 'data'):
+                                return result.data
+                            else:
+                                # Fallback: descargar completo si GetFileRequest no funciona
+                                print(f"⚠️ GetFileRequest no devolvió bytes, usando fallback")
+                                buffer = BytesIO()
+                                await client.download_media(messages, buffer)
+                                buffer.seek(start)
+                                return buffer.read(chunk_size)
+                        except Exception as e:
+                            print(f"⚠️ Error con GetFileRequest: {e}, usando fallback")
+                            # Fallback: descargar completo si GetFileRequest falla
+                            buffer = BytesIO()
+                            await client.download_media(messages, buffer)
+                            buffer.seek(start)
+                            return buffer.read(chunk_size)
                     return None
                 
                 # Timeout dinámico (más corto porque solo descargamos un chunk)
@@ -1781,6 +1802,8 @@ def get_video(video_id):
             if hasattr(messages.media, 'document'):
                 document = messages.media.document
                 from telethon.tl.types import InputDocumentFileLocation
+                from telethon.tl.functions.upload import GetFileRequest
+                
                 file_location = InputDocumentFileLocation(
                     id=document.id,
                     access_hash=document.access_hash,
@@ -1788,13 +1811,32 @@ def get_video(video_id):
                     thumb_size=''
                 )
                 
-                # Descargar los primeros bytes necesarios para metadata
-                # Descargar completo pero solo servir los primeros bytes
-                buffer = BytesIO()
-                await client.download_media(messages, buffer)
-                buffer.seek(0)
-                initial_data = buffer.read(initial_size)
-                return initial_data
+                # Descargar SOLO los primeros bytes usando GetFileRequest (streaming progresivo)
+                try:
+                    result = await client(GetFileRequest(
+                        location=file_location,
+                        offset=0,
+                        limit=initial_size
+                    ))
+                    
+                    if hasattr(result, 'bytes'):
+                        return result.bytes
+                    elif hasattr(result, 'data'):
+                        return result.data
+                    else:
+                        # Fallback: descargar completo si GetFileRequest no funciona
+                        print(f"⚠️ GetFileRequest no devolvió bytes en chunk inicial, usando fallback")
+                        buffer = BytesIO()
+                        await client.download_media(messages, buffer)
+                        buffer.seek(0)
+                        return buffer.read(initial_size)
+                except Exception as e:
+                    print(f"⚠️ Error con GetFileRequest en chunk inicial: {e}, usando fallback")
+                    # Fallback: descargar completo si GetFileRequest falla
+                    buffer = BytesIO()
+                    await client.download_media(messages, buffer)
+                    buffer.seek(0)
+                    return buffer.read(initial_size)
             return None
         
         try:

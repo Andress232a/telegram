@@ -1615,7 +1615,10 @@
             
             // Asegurar que currentChatId esté actualizado
             currentChatId = chatId;
-            console.log('✅ [confirmVideoUpload] Subiendo video a chat:', currentChatId);
+            console.log('✅ [confirmVideoUpload] Chat verificado. currentChatId:', currentChatId, 'chatId:', chatId);
+            
+            // Guardar el chatId en una variable local para pasarlo explícitamente a uploadVideo
+            const chatIdToPass = chatId;
             
             // Cerrar el modal
             closeVideoUploadModal();
@@ -1623,32 +1626,68 @@
             // Obtener la descripción
             const description = document.getElementById('videoDescription').value.trim();
             
-            // Subir el video
-            await uploadVideo(selectedVideoFile, description);
+            // Verificar una vez más antes de llamar a uploadVideo
+            console.log('🔍 [confirmVideoUpload] Antes de llamar uploadVideo. currentChatId:', currentChatId, 'chatIdToPass:', chatIdToPass, 'selectedVideoFile:', selectedVideoFile);
+            
+            // Subir el video - pasar el chatId explícitamente como tercer parámetro
+            await uploadVideo(selectedVideoFile, description, chatIdToPass);
         }
         
         // Función para subir video
-        async function uploadVideo(file, description = '') {
-            // Verificar que tenemos un chat válido
-            let chatId = currentChatId;
+        async function uploadVideo(file, description = '', chatIdParam = null) {
+            console.log('🚀 [uploadVideo] Iniciando subida. file:', file, 'currentChatId:', currentChatId, 'chatIdParam:', chatIdParam);
             
-            // Si no hay, intentar obtenerlo una última vez
+            // Verificar archivo primero
+            if (!file) {
+                alert('Error: No hay archivo seleccionado');
+                return;
+            }
+            
+            // Usar el chatId pasado como parámetro, o currentChatId, o intentar obtenerlo
+            let chatId = chatIdParam || currentChatId;
+            console.log('🔍 [uploadVideo] chatId inicial (param o currentChatId):', chatId);
+            
+            // Si no hay, intentar obtenerlo de múltiples formas
             if (!chatId) {
+                // 1. Buscar elemento activo en DOM
                 const activeChatItem = document.querySelector('.chat-item.active');
                 if (activeChatItem) {
                     chatId = activeChatItem.getAttribute('data-chat-id');
-                    currentChatId = chatId;
+                    console.log('🔍 [uploadVideo] Chat encontrado en elemento activo:', chatId);
+                }
+                
+                // 2. Si aún no hay, verificar header
+                if (!chatId) {
+                    const chatHeader = document.getElementById('chatHeader');
+                    const isHeaderVisible = chatHeader && chatHeader.style.display !== 'none' && chatHeader.style.display !== '';
+                    if (isHeaderVisible) {
+                        const headerName = document.getElementById('chatHeaderName')?.textContent.trim();
+                        if (headerName) {
+                            // Buscar en la lista de chats
+                            const foundChat = chats.find(chat => {
+                                const cleanChatName = chat.name?.trim();
+                                const cleanHeaderName = headerName.replace(/✓/g, '').replace(/\s+/g, ' ').trim();
+                                return cleanChatName === cleanHeaderName || cleanChatName?.includes(cleanHeaderName) || cleanHeaderName.includes(cleanChatName);
+                            });
+                            if (foundChat) {
+                                chatId = foundChat.id;
+                                console.log('🔍 [uploadVideo] Chat encontrado por nombre en lista:', chatId);
+                            }
+                        }
+                    }
                 }
             }
             
-            if (!file || !chatId) {
-                alert('Selecciona un chat primero');
+            console.log('🔍 [uploadVideo] Chat ID final:', chatId);
+            
+            if (!chatId) {
+                alert('Selecciona un chat primero. Haz clic en un chat de la lista para seleccionarlo.');
                 return;
             }
             
             // Asegurar que currentChatId esté actualizado
             currentChatId = chatId;
-            console.log('✅ [uploadVideo] Subiendo video a chat:', currentChatId);
+            console.log('✅ [uploadVideo] Chat verificado. Subiendo video a chat:', currentChatId);
             
             // Mostrar progreso inmediatamente
             showUploadProgress();

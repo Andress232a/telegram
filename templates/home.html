@@ -1617,20 +1617,24 @@
             currentChatId = chatId;
             console.log('✅ [confirmVideoUpload] Chat verificado. currentChatId:', currentChatId, 'chatId:', chatId);
             
-            // Guardar el chatId en una variable local para pasarlo explícitamente a uploadVideo
+            // IMPORTANTE: Guardar el archivo y chatId en variables locales ANTES de cerrar el modal
+            // porque closeVideoUploadModal() establece selectedVideoFile = null
+            const fileToUpload = selectedVideoFile;
             const chatIdToPass = chatId;
             
-            // Cerrar el modal
-            closeVideoUploadModal();
-            
-            // Obtener la descripción
+            // Obtener la descripción ANTES de cerrar el modal
             const description = document.getElementById('videoDescription').value.trim();
             
-            // Verificar una vez más antes de llamar a uploadVideo
-            console.log('🔍 [confirmVideoUpload] Antes de llamar uploadVideo. currentChatId:', currentChatId, 'chatIdToPass:', chatIdToPass, 'selectedVideoFile:', selectedVideoFile);
+            console.log('🔍 [confirmVideoUpload] Archivo guardado:', fileToUpload, 'chatId:', chatIdToPass);
             
-            // Subir el video - pasar el chatId explícitamente como tercer parámetro
-            await uploadVideo(selectedVideoFile, description, chatIdToPass);
+            // Cerrar el modal (esto establecerá selectedVideoFile = null, pero ya lo guardamos)
+            closeVideoUploadModal();
+            
+            // Verificar una vez más antes de llamar a uploadVideo
+            console.log('🔍 [confirmVideoUpload] Antes de llamar uploadVideo. fileToUpload:', fileToUpload, 'chatIdToPass:', chatIdToPass);
+            
+            // Subir el video - pasar el archivo y chatId explícitamente
+            await uploadVideo(fileToUpload, description, chatIdToPass);
         }
         
         // Función para subir video

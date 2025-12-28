@@ -268,33 +268,17 @@ def run_async(coro, loop=None, timeout=None):
     try:
         # Verificar si el loop ya está corriendo
         if loop.is_running():
-            # Si el loop está corriendo, ejecutar en un thread separado con su propio loop
+            # Si el loop está corriendo, usar run_coroutine_threadsafe para ejecutar en ese loop
+            # NO crear un nuevo loop porque el cliente detectaría el cambio
             import concurrent.futures
-            import threading
             
-            result_container = {'result': None, 'exception': None}
-            
-            def run_in_new_loop():
-                # Crear un nuevo loop para este thread
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                try:
-                    result_container['result'] = new_loop.run_until_complete(coro)
-                except Exception as e:
-                    result_container['exception'] = e
-                finally:
-                    new_loop.close()
-            
-            thread = threading.Thread(target=run_in_new_loop)
-            thread.start()
-            thread.join(timeout=timeout)
-            
-            if thread.is_alive():
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            try:
+                result = future.result(timeout=timeout)
+                return result
+            except concurrent.futures.TimeoutError:
+                future.cancel()
                 raise asyncio.TimeoutError(f"Operación excedió el timeout de {timeout} segundos")
-            
-            if result_container['exception']:
-                raise result_container['exception']
-            return result_container['result']
         else:
             # Si el loop no está corriendo, usar run_until_complete normalmente
             return loop.run_until_complete(coro)
@@ -1347,29 +1331,27 @@ def upload_video():
             print(f"🚀 Iniciando subida en background - Upload ID: {upload_id_param}")
             print(f"📋 Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}")
             
-            # IMPORTANTE: En un thread separado, NO podemos usar el mismo cliente que está en otro thread
-            # porque puede causar problemas con el event loop. Necesitamos crear un cliente nuevo
-            # en este thread con su propio loop.
+            # IMPORTANTE: NO crear un cliente nuevo con la misma sesión SQLite porque causa "database is locked"
+            # En su lugar, usar el cliente principal pero ejecutar la subida de forma asíncrona
+            # Obtener el cliente principal del diccionario
+            if phone_param not in telegram_clients:
+                raise Exception("Cliente no encontrado en telegram_clients")
             
-            # Usar las credenciales pasadas como parámetros (obtenidas de la sesión antes de crear el thread)
-            print(f"🔄 Creando cliente nuevo en thread de background para subida...")
-            loop = get_event_loop()
-            client = TelegramClient(session_name_param, api_id_param, api_hash_param, loop=loop)
+            client_data = telegram_clients[phone_param]
+            client = client_data.get('client')
+            client_loop = client_data.get('loop')
             
-            # Conectar el cliente
+            if not client or not client_loop:
+                raise Exception("Cliente o loop no disponible")
+            
+            # Verificar que el cliente esté conectado
             if not client.is_connected():
-                run_async(client.connect(), loop, timeout=10)
+                print(f"⚠️ Cliente no conectado, intentando conectar...")
+                run_async(client.connect(), client_loop, timeout=10)
                 if not client.is_connected():
-                    raise Exception("No se pudo conectar el cliente en thread de background")
+                    raise Exception("No se pudo conectar el cliente")
             
-            client_loop = client._loop
-            
-            # CRÍTICO: Verificar que el loop es válido
-            if not client_loop or client_loop.is_closed():
-                print(f"❌ Loop del cliente no es válido en thread de background")
-                raise Exception("Loop del cliente no es válido")
-            
-            print(f"✅ Cliente creado y conectado en thread de background")
+            print(f"✅ Usando cliente principal para subida en background")
             
             # Callback para el progreso
             def progress_callback(current, total):

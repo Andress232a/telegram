@@ -1682,12 +1682,13 @@ def get_video(video_id):
             print(traceback.format_exc())
             return jsonify({'error': f'Error obteniendo cliente: {str(e)}'}), 500
         
+        # Obtener chat_id y message_id para usar en las funciones anidadas
+        chat_id = video_info.get('chat_id', 'me')
+        message_id = video_info['message_id']
+        target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+        
         # Obtener información del mensaje y el archivo
         async def get_video_info():
-            chat_id = video_info.get('chat_id', 'me')
-            message_id = video_info['message_id']
-            
-            target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
             print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
             
             # Intentar obtener el mensaje específico
@@ -1826,9 +1827,27 @@ def get_video(video_id):
                             thumb_size=''
                         )
                         
+                        # Asegurarse de que file_reference esté actualizado
+                        if not document.file_reference:
+                            print(f"⚠️ file_reference vacío en range request, intentando actualizar...")
+                            try:
+                                updated_messages = await client.get_messages(target_chat, ids=message_id)
+                                if updated_messages and hasattr(updated_messages.media, 'document'):
+                                    document = updated_messages.media.document
+                                    file_location = InputDocumentFileLocation(
+                                        id=document.id,
+                                        access_hash=document.access_hash,
+                                        file_reference=document.file_reference,
+                                        thumb_size=''
+                                    )
+                                    print(f"✅ file_reference actualizado en range request")
+                            except Exception as ref_error:
+                                print(f"⚠️ Error actualizando file_reference en range: {ref_error}")
+                        
                         # Descargar SOLO el rango solicitado usando GetFileRequest
                         # Esto permite streaming progresivo real - el video empieza a reproducirse inmediatamente
                         try:
+                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={chunk_size}, file_id={document.id}")
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,
@@ -1892,14 +1911,52 @@ def get_video(video_id):
                                 else:
                                     raise Exception("No se pudo descargar ningún chunk del rango solicitado")
                         except Exception as e:
-                            print(f"⚠️ Error con GetFileRequest: {e}")
+                            error_msg = str(e)
+                            error_type = type(e).__name__
+                            print(f"❌ Error con GetFileRequest en range: {error_type}: {error_msg}")
                             import traceback
-                            print(traceback.format_exc())
+                            traceback_str = traceback.format_exc()
+                            print(traceback_str)
+                            
+                            # Si el error es de file_reference obsoleto, intentar actualizarlo
+                            if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e):
+                                print(f"🔄 Error de file_reference en range, intentando actualizar mensaje...")
+                                try:
+                                    updated_messages = await client.get_messages(target_chat, ids=message_id)
+                                    if updated_messages and hasattr(updated_messages.media, 'document'):
+                                        document = updated_messages.media.document
+                                        file_location = InputDocumentFileLocation(
+                                            id=document.id,
+                                            access_hash=document.access_hash,
+                                            file_reference=document.file_reference,
+                                            thumb_size=''
+                                        )
+                                        print(f"✅ file_reference actualizado en range, reintentando GetFileRequest...")
+                                        # Reintentar con file_reference actualizado
+                                        result = await client(GetFileRequest(
+                                            location=file_location,
+                                            offset=start,
+                                            limit=min(1024 * 1024, chunk_size)  # Intentar con 1MB primero
+                                        ))
+                                        data = None
+                                        if hasattr(result, 'bytes'):
+                                            data = result.bytes
+                                        elif hasattr(result, 'data'):
+                                            data = result.data
+                                        elif isinstance(result, bytes):
+                                            data = result
+                                        
+                                        if data and len(data) > 0:
+                                            print(f"✅ GetFileRequest range exitoso después de actualizar file_reference: {len(data)} bytes")
+                                            return data
+                                except Exception as retry_error:
+                                    print(f"⚠️ Error en reintento con file_reference actualizado en range: {retry_error}")
+                            
                             # Para videos muy grandes, NO intentar descargar todo - solo lanzar error descriptivo
                             if file_size > 1024 * 1024 * 1024:  # > 1GB
-                                raise Exception(f"No se pudo descargar el rango del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {str(e)}")
+                                raise Exception(f"No se pudo descargar el rango del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {error_type}: {error_msg}")
                             else:
-                                raise e
+                                raise Exception(f"Error descargando rango del video: {error_type}: {error_msg}")
                     return None
                 
                 # Timeout dinámico (más corto porque solo descargamos un chunk)
@@ -1959,23 +2016,50 @@ def get_video(video_id):
                 
                 # Descargar SOLO los primeros bytes usando GetFileRequest (streaming progresivo)
                 try:
+                    # Asegurarse de que file_reference esté actualizado
+                    if not document.file_reference:
+                        print(f"⚠️ file_reference vacío, intentando actualizar...")
+                        # Intentar obtener el mensaje de nuevo para actualizar file_reference
+                        try:
+                            updated_messages = await client.get_messages(target_chat, ids=message_id)
+                            if updated_messages and hasattr(updated_messages.media, 'document'):
+                                document = updated_messages.media.document
+                                file_location = InputDocumentFileLocation(
+                                    id=document.id,
+                                    access_hash=document.access_hash,
+                                    file_reference=document.file_reference,
+                                    thumb_size=''
+                                )
+                                print(f"✅ file_reference actualizado")
+                        except Exception as ref_error:
+                            print(f"⚠️ Error actualizando file_reference: {ref_error}")
+                    
+                    print(f"🔍 Intentando GetFileRequest: offset=0, limit={initial_size}, file_id={document.id}")
                     result = await client(GetFileRequest(
                         location=file_location,
                         offset=0,
                         limit=initial_size
                     ))
                     
+                    print(f"🔍 Resultado de GetFileRequest: tipo={type(result).__name__}, atributos={dir(result)}")
+                    
                     # El resultado de GetFileRequest puede tener diferentes estructuras
                     # Intentamos obtener los bytes de diferentes maneras
                     data = None
                     if hasattr(result, 'bytes'):
                         data = result.bytes
+                        print(f"✅ Datos obtenidos de result.bytes: {len(data) if data else 0} bytes")
                     elif hasattr(result, 'data'):
                         data = result.data
+                        print(f"✅ Datos obtenidos de result.data: {len(data) if data else 0} bytes")
                     elif isinstance(result, bytes):
                         data = result
+                        print(f"✅ Datos obtenidos directamente como bytes: {len(data)} bytes")
                     elif hasattr(result, '__bytes__'):
                         data = bytes(result)
+                        print(f"✅ Datos obtenidos de __bytes__: {len(data)} bytes")
+                    else:
+                        print(f"⚠️ Resultado de GetFileRequest no tiene estructura conocida: {result}")
                     
                     if data and len(data) > 0:
                         print(f"✅ GetFileRequest exitoso: {len(data)} bytes descargados")
@@ -2021,14 +2105,52 @@ def get_video(video_id):
                         else:
                             raise Exception("No se pudo descargar el chunk inicial del video")
                 except Exception as e:
-                    print(f"⚠️ Error con GetFileRequest en chunk inicial: {e}")
+                    error_msg = str(e)
+                    error_type = type(e).__name__
+                    print(f"❌ Error con GetFileRequest en chunk inicial: {error_type}: {error_msg}")
                     import traceback
-                    print(traceback.format_exc())
+                    traceback_str = traceback.format_exc()
+                    print(traceback_str)
+                    
+                    # Si el error es de file_reference obsoleto, intentar actualizarlo
+                    if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e):
+                        print(f"🔄 Error de file_reference, intentando actualizar mensaje...")
+                        try:
+                            updated_messages = await client.get_messages(target_chat, ids=message_id)
+                            if updated_messages and hasattr(updated_messages.media, 'document'):
+                                document = updated_messages.media.document
+                                file_location = InputDocumentFileLocation(
+                                    id=document.id,
+                                    access_hash=document.access_hash,
+                                    file_reference=document.file_reference,
+                                    thumb_size=''
+                                )
+                                print(f"✅ file_reference actualizado, reintentando GetFileRequest...")
+                                # Reintentar con file_reference actualizado
+                                result = await client(GetFileRequest(
+                                    location=file_location,
+                                    offset=0,
+                                    limit=min(1024 * 1024, initial_size)  # Intentar con 1MB primero
+                                ))
+                                data = None
+                                if hasattr(result, 'bytes'):
+                                    data = result.bytes
+                                elif hasattr(result, 'data'):
+                                    data = result.data
+                                elif isinstance(result, bytes):
+                                    data = result
+                                
+                                if data and len(data) > 0:
+                                    print(f"✅ GetFileRequest exitoso después de actualizar file_reference: {len(data)} bytes")
+                                    return data
+                        except Exception as retry_error:
+                            print(f"⚠️ Error en reintento con file_reference actualizado: {retry_error}")
+                    
                     # Para videos muy grandes, NO intentar descargar todo - solo lanzar error descriptivo
                     if file_size > 1024 * 1024 * 1024:  # > 1GB
-                        raise Exception(f"No se pudo descargar el chunk inicial del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {str(e)}")
+                        raise Exception(f"No se pudo descargar el chunk inicial del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {error_type}: {error_msg}")
                     else:
-                        raise e
+                        raise Exception(f"Error descargando chunk inicial: {error_type}: {error_msg}")
             return None
         
         # Timeout dinámico basado en el tamaño del video

@@ -1164,7 +1164,9 @@ def get_messages(chat_id):
                                     print(f"✅ Video existente encontrado: {existing_video_id} (Message={message.id}, Chat={chat_id_str})")
                                 
                                 msg_info['video_url'] = f'/api/video/{existing_video_id}'
-                                print(f"✅ Video URL asignado: {msg_info['video_url']}")
+                                msg_info['video_id'] = existing_video_id  # Agregar video_id directamente
+                                msg_info['watch_url'] = f'/watch/{existing_video_id}'
+                                print(f"✅ Video URL asignado: {msg_info['video_url']}, video_id: {existing_video_id}")
                                 
                                 # Pre-cargar video en memoria en segundo plano (como Telegram - instantáneo)
                                 def preload_video():

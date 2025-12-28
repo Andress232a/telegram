@@ -1066,26 +1066,29 @@
                 let content = '';
                 // Si tiene video, mostrar miniatura primero (como Telegram Web)
                 if (msg.video_url) {
-                    console.log('🎬 Renderizando video:', msg.video_url, 'msg.id:', msg.id);
+                    // Usar video_id directamente del mensaje (más confiable)
+                    const videoIdFromMsg = msg.video_id || msg.video_url.split('/').pop().split('?')[0];
+                    
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
                     
-                    // Usar msg.id como base para el ID único (más confiable que Date.now())
+                    // Usar msg.id como base para el ID único del elemento DOM (más confiable que Date.now())
                     const uniqueId = msg.id || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    const videoId = `video-${uniqueId}`;
+                    const videoElementId = `video-${uniqueId}`;
                     
-                    // Extraer video_id de la URL de forma más robusta
-                    let videoIdFromUrl = msg.video_url.split('/').pop().split('?')[0];
-                    // Si no se puede extraer, intentar desde watch_url
-                    if (!videoIdFromUrl || videoIdFromUrl === '') {
-                        videoIdFromUrl = watchUrl.split('/').pop();
-                    }
+                    // Usar video_id del mensaje directamente (no extraer de URL)
+                    const videoIdForThumbnail = videoIdFromMsg;
                     
-                    const thumbnailUrl = `/api/video/${videoIdFromUrl}/thumbnail?_t=${Date.now()}`;
-                    const videoUrlWithCache = `${msg.video_url}${msg.video_url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+                    const thumbnailUrl = `/api/video/${videoIdForThumbnail}/thumbnail?_t=${Date.now()}`;
                     
-                    console.log('🔍 Video ID único:', videoId, 'videoIdFromUrl:', videoIdFromUrl, 'thumbnailUrl:', thumbnailUrl);
+                    console.log('🎬 Renderizando video:', {
+                        'msg.id': msg.id,
+                        'video_id': videoIdForThumbnail,
+                        'video_url': msg.video_url,
+                        'watch_url': watchUrl,
+                        'videoElementId': videoElementId
+                    });
                     
                     // Mostrar miniatura primero, video solo cuando se hace click (como Telegram Web)
                     content = `
@@ -1101,9 +1104,9 @@
                                  margin: 8px 0;
                                  cursor: pointer;
                              "
-                             onclick="loadVideoOnClick('${videoId}', '${msg.video_url}', '${videoIdFromUrl}')"
+                             onclick="loadVideoOnClick('${videoElementId}', '${msg.video_url}', '${videoIdForThumbnail}')"
                         >
-                            <img id="${videoId}-thumbnail" 
+                            <img id="${videoElementId}-thumbnail" 
                                  src="${thumbnailUrl}" 
                                  loading="eager"
                                  style="
@@ -1113,12 +1116,12 @@
                                      max-height: 500px;
                                      object-fit: cover;
                                  "
-                                 onerror="console.error('Error cargando miniatura para video ${videoIdFromUrl}'); this.style.display='none'; const videoEl = document.getElementById('${videoId}'); if (videoEl) videoEl.style.display='block';"
-                                 onload="console.log('✅ Miniatura cargada para video ${videoIdFromUrl}');"
+                                 onerror="console.error('Error cargando miniatura para video ${videoIdForThumbnail}'); this.style.display='none'; const videoEl = document.getElementById('${videoElementId}'); if (videoEl) videoEl.style.display='block';"
+                                 onload="console.log('✅ Miniatura cargada para video ${videoIdForThumbnail}');"
                                  alt="Video thumbnail">
                             <video
-                                id="${videoId}"
-                                data-video-id="${videoIdFromUrl}"
+                                id="${videoElementId}"
+                                data-video-id="${videoIdForThumbnail}"
                                 controls
                                 playsinline
                                 preload="none"

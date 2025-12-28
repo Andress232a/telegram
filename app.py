@@ -1000,24 +1000,47 @@ def get_or_create_client(phone):
         client = client_data.get('client')
         loop = client_data.get('loop')
         
-        # Verificar que el cliente existe y está conectado
+        # Verificar que el cliente existe y el loop es válido
         if client:
-            # Verificar que el loop no esté cerrado
+            # PRIMERO verificar que el loop no esté cerrado
             if loop and not loop.is_closed():
-                # Verificar conexión
+                # El loop es válido, verificar conexión
                 try:
-                    if client.is_connected():
-                        # NO intentar cambiar el loop - Telethon no lo permite después de la conexión
+                    # Usar el loop válido para verificar la conexión
+                    is_connected = run_async(client.is_connected(), loop, timeout=5)
+                    if is_connected:
+                        # Cliente válido y conectado, retornarlo
                         return client
+                    else:
+                        print(f"⚠️ Cliente existe pero no está conectado, intentando reconectar...")
+                        # Intentar reconectar
+                        try:
+                            run_async(client.connect(), loop, timeout=10)
+                            if client.is_connected():
+                                return client
+                        except Exception as e:
+                            print(f"⚠️ Error reconectando cliente: {e}")
+                            # Si falla la reconexión, crear uno nuevo
+                            del telegram_clients[phone]
                 except Exception as e:
                     print(f"⚠️ Error verificando conexión del cliente: {e}")
+                    # Si hay error, el cliente puede estar en mal estado, crear uno nuevo
+                    try:
+                        if client.is_connected():
+                            try:
+                                run_async(client.disconnect(), loop, timeout=5)
+                            except:
+                                pass
+                    except:
+                        pass
+                    del telegram_clients[phone]
             else:
                 print(f"⚠️ Loop del cliente cerrado, necesitamos crear un nuevo cliente...")
-                # El loop está cerrado, NO podemos cambiar el loop de un cliente conectado
-                # Necesitamos desconectar y crear uno nuevo
+                # El loop está cerrado, NO podemos usar el cliente
+                # Intentar desconectar de forma segura (sin usar el loop cerrado)
                 try:
-                    if client.is_connected():
-                        run_async(client.disconnect(), loop if loop and not loop.is_closed() else get_event_loop(), timeout=5)
+                    # No intentar desconectar con un loop cerrado, simplemente limpiar
+                    pass
                 except:
                     pass
                 # Limpiar el cliente viejo

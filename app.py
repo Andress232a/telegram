@@ -1773,10 +1773,25 @@ def get_video(video_id):
             print(f"⏱️ Timeout al obtener información del video {video_id} desde Telegram")
             return jsonify({'error': 'Tiempo de espera agotado al obtener el video. Intenta más tarde.'}), 504
         except Exception as e:
-            print(f"❌ Error al obtener información del video {video_id}: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
             import traceback
-            print(traceback.format_exc())
-            return jsonify({'error': f'Error al obtener el video: {str(e)}'}), 500
+            traceback_str = traceback.format_exc()
+            print(f"❌ Error al obtener información del video {video_id}: {error_type}: {error_msg}")
+            print(traceback_str)
+            
+            # Devolver un mensaje de error más descriptivo
+            error_response = {
+                'error': f'Error al obtener información del video: {error_msg}',
+                'error_type': error_type,
+                'video_id': video_id
+            }
+            
+            # Si es un error de event loop, sugerir recargar
+            if 'event loop' in error_msg.lower() or 'asyncio' in error_msg.lower():
+                error_response['suggestion'] = 'Por favor, recarga la página e intenta de nuevo.'
+            
+            return jsonify(error_response), 500
         
         if not messages:
             print(f"⚠️ No se pudo obtener el mensaje del video {video_id} desde Telegram")
@@ -2184,15 +2199,45 @@ def get_video(video_id):
                 return jsonify({'error': 'No se pudo obtener el video'}), 500
         except Exception as e:
             import traceback
-            print(f"❌ Error descargando chunk inicial: {e}")
-            print(traceback.format_exc())
-            return jsonify({'error': str(e)}), 500
+            error_type = type(e).__name__
+            error_msg = str(e)
+            traceback_str = traceback.format_exc()
+            print(f"❌ Error descargando chunk inicial del video {video_id}: {error_type}: {error_msg}")
+            print(traceback_str)
+            
+            # Devolver un mensaje de error más descriptivo
+            error_response = {
+                'error': f'Error al descargar el video: {error_msg}',
+                'error_type': error_type,
+                'video_id': video_id
+            }
+            
+            # Si es un error de event loop o file_reference, sugerir recargar
+            if 'event loop' in error_msg.lower() or 'asyncio' in error_msg.lower() or 'file_reference' in error_msg.lower():
+                error_response['suggestion'] = 'Por favor, recarga la página e intenta de nuevo.'
+            
+            return jsonify(error_response), 500
             
     except Exception as e:
         import traceback
-        print(f"❌ Error obteniendo video: {e}")
-        print(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+        error_type = type(e).__name__
+        error_msg = str(e)
+        traceback_str = traceback.format_exc()
+        print(f"❌ Error obteniendo video {video_id}: {error_type}: {error_msg}")
+        print(traceback_str)
+        
+        # Devolver un mensaje de error más descriptivo
+        error_response = {
+            'error': f'Error al obtener el video: {error_msg}',
+            'error_type': error_type,
+            'video_id': video_id
+        }
+        
+        # Si es un error de event loop, sugerir recargar
+        if 'event loop' in error_msg.lower() or 'asyncio' in error_msg.lower():
+            error_response['suggestion'] = 'Por favor, recarga la página e intenta de nuevo.'
+        
+        return jsonify(error_response), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():

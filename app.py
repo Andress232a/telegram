@@ -256,6 +256,15 @@ def run_async(coro, loop=None, timeout=None):
     if loop is None:
         loop = get_event_loop()
     
+    # Asegurarse de que el loop no esté cerrado
+    if loop.is_closed():
+        # Si el loop está cerrado, crear uno nuevo
+        thread_id = threading.current_thread().ident
+        with _thread_lock:
+            if thread_id in _thread_loops:
+                del _thread_loops[thread_id]
+        loop = get_event_loop()
+    
     try:
         # Verificar si el loop ya está corriendo
         if loop.is_running():
@@ -266,16 +275,22 @@ def run_async(coro, loop=None, timeout=None):
             result_container = {'result': None, 'exception': None}
             
             def run_in_new_loop():
-                # Usar run_coroutine_threadsafe para ejecutar en el loop que ya está corriendo
+                # Crear un nuevo loop para este thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
                 try:
-                    future = asyncio.run_coroutine_threadsafe(coro, loop)
-                    result_container['result'] = future.result(timeout=timeout)
+                    result_container['result'] = new_loop.run_until_complete(coro)
                 except Exception as e:
                     result_container['exception'] = e
+                finally:
+                    new_loop.close()
             
             thread = threading.Thread(target=run_in_new_loop)
             thread.start()
-            thread.join()
+            thread.join(timeout=timeout)
+            
+            if thread.is_alive():
+                raise asyncio.TimeoutError(f"Operación excedió el timeout de {timeout} segundos")
             
             if result_container['exception']:
                 raise result_container['exception']
@@ -411,7 +426,7 @@ def connect():
                 print(f"❌ Error en connect_and_check: {e}")
                 raise
         
-        is_authorized = run_async(connect_and_check())
+        is_authorized = run_async(connect_and_check(), loop)
         print(f"🔐 Autorizado: {is_authorized}")
         
         if not is_authorized:
@@ -426,7 +441,7 @@ def connect():
                     print(f"❌ Error al enviar código: {e}")
                     raise
             
-            code_result = run_async(send_code())
+            code_result = run_async(send_code(), loop)
             # Obtener el phone_code_hash del resultado
             phone_code_hash = None
             if hasattr(code_result, 'phone_code_hash'):
@@ -496,12 +511,18 @@ def verify_code():
     # Usar el cliente existente si está disponible, o recrearlo
     if 'client' in client_data and client_data['client'] is not None:
         client = client_data['client']
+        # Obtener el loop del cliente o crear uno nuevo
+        loop = client_data.get('loop')
+        if not loop or loop.is_closed():
+            loop = get_event_loop()
+            client_data['loop'] = loop
         print("🔄 Usando cliente existente...")
     else:
         # Asegurarse de que hay un event loop antes de crear el cliente
         loop = get_event_loop()
         # Recrear cliente en este thread
         client = TelegramClient(client_data['session_name'], client_data['api_id'], client_data['api_hash'], loop=loop)
+        client_data['loop'] = loop
         print("🆕 Creando nuevo cliente...")
     
     try:
@@ -525,7 +546,7 @@ def verify_code():
             else:
                 print("✅ Ya está autorizado")
         
-        run_async(verify_and_sign_in())
+        run_async(verify_and_sign_in(), loop)
         
         # Actualizar el cliente en el diccionario
         client_data['client'] = client

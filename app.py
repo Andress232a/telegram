@@ -1748,19 +1748,32 @@ def get_video(video_id):
                                 limit=chunk_size
                             ))
                             
+                            # El resultado de GetFileRequest puede tener diferentes estructuras
+                            # Intentamos obtener los bytes de diferentes maneras
+                            data = None
                             if hasattr(result, 'bytes'):
-                                return result.bytes
+                                data = result.bytes
                             elif hasattr(result, 'data'):
-                                return result.data
+                                data = result.data
+                            elif isinstance(result, bytes):
+                                data = result
+                            elif hasattr(result, '__bytes__'):
+                                data = bytes(result)
+                            
+                            if data and len(data) > 0:
+                                print(f"✅ GetFileRequest range exitoso: {len(data)} bytes descargados (rango {start}-{start+len(data)-1})")
+                                return data
                             else:
                                 # Fallback: descargar completo si GetFileRequest no funciona
-                                print(f"⚠️ GetFileRequest no devolvió bytes, usando fallback")
+                                print(f"⚠️ GetFileRequest no devolvió bytes válidos, usando fallback")
                                 buffer = BytesIO()
                                 await client.download_media(messages, buffer)
                                 buffer.seek(start)
                                 return buffer.read(chunk_size)
                         except Exception as e:
                             print(f"⚠️ Error con GetFileRequest: {e}, usando fallback")
+                            import traceback
+                            print(traceback.format_exc())
                             # Fallback: descargar completo si GetFileRequest falla
                             buffer = BytesIO()
                             await client.download_media(messages, buffer)
@@ -1794,9 +1807,17 @@ def get_video(video_id):
         print(f"📥 Solicitud inicial, sirviendo primeros bytes para metadata...")
         
         async def download_initial_chunk():
-            # Para la solicitud inicial, descargar solo los primeros bytes necesarios para metadata
-            # Telegram Web usa aproximadamente 512KB-1MB para metadata
-            initial_size = min(1024 * 1024, file_size)  # 1MB es suficiente para metadata de la mayoría de videos
+            # Para videos pesados, necesitamos un chunk inicial más grande para que el navegador
+            # tenga suficiente información para empezar a reproducir mientras descarga el resto
+            # Usamos 5MB para videos grandes, 3MB para medianos, y 1MB para pequeños
+            if file_size > 50 * 1024 * 1024:  # Videos > 50MB
+                initial_size = min(5 * 1024 * 1024, file_size)  # 5MB
+            elif file_size > 10 * 1024 * 1024:  # Videos > 10MB
+                initial_size = min(3 * 1024 * 1024, file_size)  # 3MB
+            else:
+                initial_size = min(1024 * 1024, file_size)  # 1MB
+            
+            print(f"📊 Descargando chunk inicial de {initial_size / (1024*1024):.2f}MB para video de {file_size / (1024*1024):.2f}MB")
             
             # Usar GetFileRequest para descargar solo los primeros bytes (MUCHO más rápido)
             if hasattr(messages.media, 'document'):
@@ -1819,19 +1840,32 @@ def get_video(video_id):
                         limit=initial_size
                     ))
                     
+                    # El resultado de GetFileRequest puede tener diferentes estructuras
+                    # Intentamos obtener los bytes de diferentes maneras
+                    data = None
                     if hasattr(result, 'bytes'):
-                        return result.bytes
+                        data = result.bytes
                     elif hasattr(result, 'data'):
-                        return result.data
+                        data = result.data
+                    elif isinstance(result, bytes):
+                        data = result
+                    elif hasattr(result, '__bytes__'):
+                        data = bytes(result)
+                    
+                    if data and len(data) > 0:
+                        print(f"✅ GetFileRequest exitoso: {len(data)} bytes descargados")
+                        return data
                     else:
                         # Fallback: descargar completo si GetFileRequest no funciona
-                        print(f"⚠️ GetFileRequest no devolvió bytes en chunk inicial, usando fallback")
+                        print(f"⚠️ GetFileRequest no devolvió bytes válidos, usando fallback")
                         buffer = BytesIO()
                         await client.download_media(messages, buffer)
                         buffer.seek(0)
                         return buffer.read(initial_size)
                 except Exception as e:
                     print(f"⚠️ Error con GetFileRequest en chunk inicial: {e}, usando fallback")
+                    import traceback
+                    print(traceback.format_exc())
                     # Fallback: descargar completo si GetFileRequest falla
                     buffer = BytesIO()
                     await client.download_media(messages, buffer)

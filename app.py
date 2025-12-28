@@ -1636,19 +1636,27 @@ def get_video_thumbnail(video_id):
 @app.route('/api/video/<video_id>')
 def get_video(video_id):
     """Obtener el video directamente desde la nube de Telegram (sin caché)"""
-    # Verificar si hay range request
-    range_header = request.headers.get('Range', None)
-    
-    video_info = get_video_from_db(video_id)
-    if not video_info:
-        return jsonify({'error': 'Video no encontrado'}), 404
-    
-    # Obtener phone de la sesión o configuración guardada
-    phone = session.get('phone')
-    if not phone:
-        # NO cargar configuración guardada globalmente
-        # Si no hay sesión activa, el usuario debe iniciar sesión
-        return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
+    try:
+        print(f"🎬 Solicitud de video: {video_id}")
+        # Verificar si hay range request
+        range_header = request.headers.get('Range', None)
+        if range_header:
+            print(f"📥 Range request: {range_header}")
+        
+        video_info = get_video_from_db(video_id)
+        if not video_info:
+            print(f"❌ Video {video_id} no encontrado en la base de datos")
+            return jsonify({'error': 'Video no encontrado'}), 404
+        
+        print(f"✅ Video encontrado en DB: chat_id={video_info.get('chat_id')}, message_id={video_info.get('message_id')}")
+        
+        # Obtener phone de la sesión o configuración guardada
+        phone = session.get('phone')
+        if not phone:
+            print(f"❌ No hay sesión activa para video {video_id}")
+            # NO cargar configuración guardada globalmente
+            # Si no hay sesión activa, el usuario debe iniciar sesión
+            return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
     
     try:
         # Verificar que la sesión es válida para este usuario
@@ -1681,11 +1689,21 @@ def get_video(video_id):
                 print(f"❌ Cliente no tiene loop asignado, esto no debería pasar")
                 return jsonify({'error': 'Error interno del cliente'}), 500
             
-            # Si el loop está cerrado, el cliente no funcionará
-            # En este caso, get_or_create_client debería haberlo manejado
+            # Si el loop está cerrado, intentar recrear el cliente
             if client_loop.is_closed():
-                print(f"❌ Loop del cliente está cerrado, esto no debería pasar después de get_or_create_client")
-                return jsonify({'error': 'Error de conexión. Por favor, recarga la página.'}), 500
+                print(f"⚠️ Loop del cliente está cerrado, intentando recrear cliente...")
+                try:
+                    if phone in telegram_clients:
+                        del telegram_clients[phone]
+                    client = get_or_create_client(phone)
+                    if not client:
+                        return jsonify({'error': 'No se pudo recrear el cliente de Telegram'}), 500
+                    client_loop = client._loop
+                    if not client_loop or client_loop.is_closed():
+                        return jsonify({'error': 'Error de conexión. Por favor, recarga la página.'}), 500
+                except Exception as recreate_error:
+                    print(f"❌ Error recreando cliente: {recreate_error}")
+                    return jsonify({'error': 'Error de conexión. Por favor, recarga la página.'}), 500
         except Exception as e:
             print(f"❌ Error obteniendo cliente: {e}")
             import traceback
@@ -2188,6 +2206,18 @@ def get_video(video_id):
             timeout_initial = 60  # 1 minuto para videos normales
         
         try:
+            # Verificar que el loop esté disponible antes de descargar
+            if not client_loop or client_loop.is_closed():
+                print(f"❌ Loop no disponible antes de download_initial_chunk, intentando recrear cliente...")
+                if phone in telegram_clients:
+                    del telegram_clients[phone]
+                client = get_or_create_client(phone)
+                if not client:
+                    return jsonify({'error': 'No se pudo obtener un cliente válido'}), 500
+                client_loop = client._loop
+                if not client_loop or client_loop.is_closed():
+                    return jsonify({'error': 'No se pudo obtener un loop válido'}), 500
+            
             print(f"⏱️ Timeout configurado: {timeout_initial}s para video de {file_size / (1024*1024*1024):.2f}GB")
             initial_data = run_async(download_initial_chunk(), client_loop, timeout=timeout_initial)
             
@@ -2231,7 +2261,8 @@ def get_video(video_id):
         error_type = type(e).__name__
         error_msg = str(e)
         traceback_str = traceback.format_exc()
-        print(f"❌ Error obteniendo video {video_id}: {error_type}: {error_msg}")
+        print(f"❌ ERROR GENERAL obteniendo video {video_id}: {error_type}: {error_msg}")
+        print(f"📍 Traceback completo:")
         print(traceback_str)
         
         # Devolver un mensaje de error más descriptivo

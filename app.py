@@ -1088,22 +1088,18 @@ def get_messages(chat_id):
         # Obtener cliente de forma segura
         client = get_or_create_client(phone)
         
-        # Obtener el loop del cliente - NO intentar cambiarlo si el cliente está conectado
+        # CRÍTICO: Usar SIEMPRE el loop que el cliente tiene asignado internamente
+        # NO intentar cambiarlo ni recrearlo - Telethon no lo permite
         client_loop = client._loop
-        if not client_loop or client_loop.is_closed():
-            print(f"⚠️ Loop del cliente cerrado, necesitamos recrear el cliente...")
-            # Si el loop está cerrado, necesitamos recrear el cliente
-            # Limpiar el cliente actual
-            try:
-                if client.is_connected():
-                    run_async(client.disconnect(), client_loop if client_loop and not client_loop.is_closed() else get_event_loop(), timeout=5)
-            except:
-                pass
-            if phone in telegram_clients:
-                del telegram_clients[phone]
-            # Obtener un nuevo cliente
-            client = get_or_create_client(phone)
-            client_loop = client._loop
+        if not client_loop:
+            print(f"❌ Cliente no tiene loop asignado, esto no debería pasar")
+            return jsonify({'error': 'Error interno del cliente'}), 500
+        
+        # Si el loop está cerrado, el cliente no funcionará
+        # En este caso, get_or_create_client debería haberlo manejado
+        if client_loop.is_closed():
+            print(f"❌ Loop del cliente está cerrado, esto no debería pasar después de get_or_create_client")
+            return jsonify({'error': 'Error de conexión. Por favor, recarga la página.'}), 500
         
         async def fetch_messages():
             messages = []

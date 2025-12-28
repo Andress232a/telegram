@@ -1344,11 +1344,47 @@ def upload_video():
             print(f"🚀 Iniciando subida en background - Upload ID: {upload_id_param}")
             print(f"📋 Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}")
             
-            # Obtener cliente de forma segura (usando el parámetro, no la sesión)
-            client = get_or_create_client(phone_param)
+            # IMPORTANTE: En un thread separado, NO podemos usar el mismo cliente que está en otro thread
+            # porque puede causar problemas con el event loop. Necesitamos crear un cliente nuevo
+            # en este thread con su propio loop.
             
-            # Usar el loop del cliente
+            # Obtener datos de la sesión desde el diccionario de clientes
+            session_name = f"sessions/{secure_filename(phone_param)}"
+            api_id = None
+            api_hash = None
+            
+            # Intentar obtener de telegram_clients si existe
+            if phone_param in telegram_clients:
+                client_data = telegram_clients[phone_param]
+                api_id = client_data.get('api_id')
+                api_hash = client_data.get('api_hash')
+                session_name = client_data.get('session_name', session_name)
+            
+            # Si no tenemos los datos, no podemos continuar
+            if not api_id or not api_hash:
+                print(f"❌ No se pudieron obtener api_id/api_hash en thread de background")
+                raise Exception("No se pudieron obtener las credenciales de API en el thread de background")
+            
+            # Crear un nuevo cliente en este thread con su propio loop
+            # Esto evita problemas con el event loop del cliente principal
+            print(f"🔄 Creando cliente nuevo en thread de background para subida...")
+            loop = get_event_loop()
+            client = TelegramClient(session_name, api_id, api_hash, loop=loop)
+            
+            # Conectar el cliente
+            if not client.is_connected():
+                run_async(client.connect(), loop, timeout=10)
+                if not client.is_connected():
+                    raise Exception("No se pudo conectar el cliente en thread de background")
+            
             client_loop = client._loop
+            
+            # CRÍTICO: Verificar que el loop es válido
+            if not client_loop or client_loop.is_closed():
+                print(f"❌ Loop del cliente no es válido en thread de background")
+                raise Exception("Loop del cliente no es válido")
+            
+            print(f"✅ Cliente creado y conectado en thread de background")
             
             # Callback para el progreso
             def progress_callback(current, total):

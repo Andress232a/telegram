@@ -110,25 +110,47 @@ db_config = load_db_config()
 def get_db_connection():
     """Context manager para obtener conexión a MySQL"""
     if not db_config:
-        raise Exception("Configuración de base de datos no disponible")
+        error_msg = "Configuración de base de datos no disponible. Verifica que db_config.json exista o que la configuración por defecto sea correcta."
+        print(f"❌ {error_msg}")
+        raise Exception(error_msg)
     
     conn = None
     try:
+        print(f"🔌 Intentando conectar a MySQL: host={db_config['host']}, database={db_config['database']}, user={db_config['user']}")
         conn = pymysql.connect(
             host=db_config['host'],
             user=db_config['user'],
             password=db_config['password'],
             database=db_config['database'],
             charset=db_config.get('charset', 'utf8mb4'),
-            cursorclass=pymysql.cursors.DictCursor
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=10
         )
+        print(f"✅ Conexión a MySQL establecida exitosamente")
         yield conn
+    except pymysql.Error as db_error:
+        error_type = type(db_error).__name__
+        error_code = getattr(db_error, 'args', [None])[0] if hasattr(db_error, 'args') and db_error.args else None
+        error_msg = str(db_error)
+        print(f"❌ Error de MySQL: {error_type} (código: {error_code}): {error_msg}")
+        print(f"📋 Configuración usada: host={db_config.get('host')}, database={db_config.get('database')}, user={db_config.get('user')}")
+        import traceback
+        print(traceback.format_exc())
+        raise Exception(f"Error de conexión a MySQL: {error_msg}") from db_error
     except Exception as e:
-        print(f"❌ Error de conexión a MySQL: {e}")
-        raise
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"❌ Error de conexión a MySQL: {error_type}: {error_msg}")
+        import traceback
+        print(traceback.format_exc())
+        raise Exception(f"Error de conexión a MySQL: {error_msg}") from e
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+                print(f"🔌 Conexión a MySQL cerrada")
+            except:
+                pass
 
 # Funciones para trabajar con videos en MySQL
 def get_video_from_db(video_id):
@@ -151,9 +173,22 @@ def get_video_from_db(video_id):
                         'phone': None  # No almacenamos phone en la tabla, se obtiene de otra forma
                     }
                 return None
+    except pymysql.Error as db_error:
+        error_type = type(db_error).__name__
+        error_msg = str(db_error)
+        print(f"❌ Error de MySQL obteniendo video {video_id}: {error_type}: {error_msg}")
+        import traceback
+        print(traceback.format_exc())
+        # Relanzar la excepción para que el llamador pueda manejarla
+        raise Exception(f"Error de base de datos MySQL: {error_msg}") from db_error
     except Exception as e:
-        print(f"❌ Error obteniendo video desde DB: {e}")
-        return None
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"❌ Error obteniendo video desde DB: {error_type}: {error_msg}")
+        import traceback
+        print(traceback.format_exc())
+        # Relanzar la excepción para que el llamador pueda manejarla
+        raise
 
 def find_video_by_message(chat_id, message_id, phone):
     """Buscar video existente por chat_id, message_id y phone"""
@@ -1661,7 +1696,22 @@ def get_video(video_id):
         if range_header:
             print(f"📥 Range request: {range_header}")
         
-        video_info = get_video_from_db(video_id)
+        # Verificar conexión a base de datos primero
+        try:
+            video_info = get_video_from_db(video_id)
+        except Exception as db_error:
+            error_type = type(db_error).__name__
+            error_msg = str(db_error)
+            print(f"❌ ERROR DE BASE DE DATOS obteniendo video {video_id}: {error_type}: {error_msg}")
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({
+                'error': f'Error de conexión a la base de datos: {error_msg}',
+                'error_type': error_type,
+                'video_id': video_id,
+                'suggestion': 'Verifica que MySQL esté ejecutándose y que la configuración de la base de datos sea correcta.'
+            }), 500
+        
         if not video_info:
             print(f"❌ Video {video_id} no encontrado en la base de datos")
             return jsonify({'error': 'Video no encontrado'}), 404
@@ -1672,6 +1722,7 @@ def get_video(video_id):
         phone = session.get('phone')
         if not phone:
             print(f"❌ No hay sesión activa para video {video_id}")
+            print(f"📋 Contenido de session: {list(session.keys())}")
             # NO cargar configuración guardada globalmente
             # Si no hay sesión activa, el usuario debe iniciar sesión
             return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
@@ -1682,10 +1733,16 @@ def get_video(video_id):
         
         # Obtener cliente de Telegram
         try:
+            print(f"🔌 Intentando obtener cliente de Telegram para {phone}...")
             client = get_or_create_client(phone)
             if not client:
                 print(f"❌ No se pudo obtener cliente de Telegram para {phone}")
-                return jsonify({'error': 'No se pudo conectar a Telegram'}), 500
+                return jsonify({
+                    'error': 'No se pudo conectar a Telegram',
+                    'error_type': 'ClientCreationFailed',
+                    'video_id': video_id,
+                    'suggestion': 'Intenta recargar la página o iniciar sesión nuevamente.'
+                }), 500
             
             # Verificar que el cliente esté conectado
             if not client.is_connected():
@@ -1694,17 +1751,36 @@ def get_video(video_id):
                     run_async(client.connect(), client._loop, timeout=10)
                     if not client.is_connected():
                         print(f"❌ No se pudo conectar el cliente de Telegram")
-                        return jsonify({'error': 'No se pudo conectar a Telegram'}), 500
+                        return jsonify({
+                            'error': 'No se pudo conectar a Telegram',
+                            'error_type': 'ConnectionFailed',
+                            'video_id': video_id,
+                            'suggestion': 'Verifica tu conexión a internet e intenta de nuevo.'
+                        }), 500
                 except Exception as e:
-                    print(f"❌ Error conectando cliente: {e}")
-                    return jsonify({'error': f'Error de conexión: {str(e)}'}), 500
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    print(f"❌ Error conectando cliente: {error_type}: {error_msg}")
+                    import traceback
+                    print(traceback.format_exc())
+                    return jsonify({
+                        'error': f'Error de conexión: {error_msg}',
+                        'error_type': error_type,
+                        'video_id': video_id,
+                        'suggestion': 'Intenta recargar la página o iniciar sesión nuevamente.'
+                    }), 500
             
             # CRÍTICO: Usar SIEMPRE el loop que el cliente tiene asignado internamente
             # NO intentar cambiarlo ni recrearlo - Telethon no lo permite
             client_loop = client._loop
             if not client_loop:
                 print(f"❌ Cliente no tiene loop asignado, esto no debería pasar")
-                return jsonify({'error': 'Error interno del cliente'}), 500
+                return jsonify({
+                    'error': 'Error interno del cliente',
+                    'error_type': 'NoEventLoop',
+                    'video_id': video_id,
+                    'suggestion': 'Por favor, recarga la página e intenta de nuevo.'
+                }), 500
             
             # Si el loop está cerrado, intentar recrear el cliente
             if client_loop.is_closed():
@@ -1714,18 +1790,45 @@ def get_video(video_id):
                         del telegram_clients[phone]
                     client = get_or_create_client(phone)
                     if not client:
-                        return jsonify({'error': 'No se pudo recrear el cliente de Telegram'}), 500
+                        return jsonify({
+                            'error': 'No se pudo recrear el cliente de Telegram',
+                            'error_type': 'ClientRecreationFailed',
+                            'video_id': video_id,
+                            'suggestion': 'Por favor, recarga la página e intenta de nuevo.'
+                        }), 500
                     client_loop = client._loop
                     if not client_loop or client_loop.is_closed():
-                        return jsonify({'error': 'Error de conexión. Por favor, recarga la página.'}), 500
+                        return jsonify({
+                            'error': 'Error de conexión. Por favor, recarga la página.',
+                            'error_type': 'EventLoopClosed',
+                            'video_id': video_id,
+                            'suggestion': 'Por favor, recarga la página e intenta de nuevo.'
+                        }), 500
                 except Exception as recreate_error:
-                    print(f"❌ Error recreando cliente: {recreate_error}")
-                    return jsonify({'error': 'Error de conexión. Por favor, recarga la página.'}), 500
+                    error_type = type(recreate_error).__name__
+                    error_msg = str(recreate_error)
+                    print(f"❌ Error recreando cliente: {error_type}: {error_msg}")
+                    import traceback
+                    print(traceback.format_exc())
+                    return jsonify({
+                        'error': f'Error de conexión: {error_msg}',
+                        'error_type': error_type,
+                        'video_id': video_id,
+                        'suggestion': 'Por favor, recarga la página e intenta de nuevo.'
+                    }), 500
         except Exception as e:
-            print(f"❌ Error obteniendo cliente: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            print(f"❌ Error obteniendo cliente: {error_type}: {error_msg}")
             import traceback
-            print(traceback.format_exc())
-            return jsonify({'error': f'Error obteniendo cliente: {str(e)}'}), 500
+            traceback_str = traceback.format_exc()
+            print(traceback_str)
+            return jsonify({
+                'error': f'Error obteniendo cliente: {error_msg}',
+                'error_type': error_type,
+                'video_id': video_id,
+                'suggestion': 'Intenta recargar la página o iniciar sesión nuevamente.'
+            }), 500
         
         # Obtener chat_id y message_id para usar en las funciones anidadas
         chat_id = video_info.get('chat_id', 'me')

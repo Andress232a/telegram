@@ -1000,11 +1000,22 @@
         let currentVideoUrl = null;
         
         // Función para cargar el video cuando el usuario hace click en la miniatura
-        function loadVideoOnClick(videoId, videoUrl) {
+        function loadVideoOnClick(videoId, videoUrl, videoIdFromUrl) {
+            console.log('▶️ Cargando video:', videoId, 'videoUrl:', videoUrl, 'videoIdFromUrl:', videoIdFromUrl);
+            
             const videoEl = document.getElementById(videoId);
             const thumbnailEl = document.getElementById(videoId + '-thumbnail');
             
-            if (!videoEl) return;
+            if (!videoEl) {
+                console.error('❌ No se encontró el elemento de video:', videoId);
+                return;
+            }
+            
+            // Verificar que el video correcto esté asociado
+            const expectedVideoId = videoEl.getAttribute('data-video-id');
+            if (expectedVideoId && expectedVideoId !== videoIdFromUrl) {
+                console.warn('⚠️ Advertencia: El video ID no coincide. Esperado:', expectedVideoId, 'Recibido:', videoIdFromUrl);
+            }
             
             // Ocultar miniatura y mostrar video
             if (thumbnailEl) {
@@ -1015,11 +1026,24 @@
             // Cargar el video solo ahora
             if (videoEl.readyState === 0) { // Si no se ha cargado nada
                 const source = videoEl.querySelector('source');
-                if (source && !source.src.includes('?')) {
-                    // Agregar timestamp para evitar caché
-                    source.src = videoUrl + '?_t=' + Date.now();
+                if (source) {
+                    // Asegurarse de que la URL sea correcta
+                    const currentSrc = source.src;
+                    const expectedSrc = videoUrl.split('?')[0]; // Sin parámetros de caché
+                    
+                    if (!currentSrc.includes(expectedSrc)) {
+                        console.log('🔄 Actualizando source del video:', expectedSrc);
+                        source.src = videoUrl + (videoUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
+                    } else if (!currentSrc.includes('_t=')) {
+                        // Agregar timestamp si no lo tiene
+                        source.src = currentSrc + (currentSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
+                    }
                 }
+                
+                console.log('📥 Cargando video desde:', source ? source.src : 'N/A');
                 videoEl.load();
+            } else {
+                console.log('✅ Video ya está cargado (readyState:', videoEl.readyState, ')');
             }
             
             // Intentar reproducir
@@ -1042,14 +1066,26 @@
                 let content = '';
                 // Si tiene video, mostrar miniatura primero (como Telegram Web)
                 if (msg.video_url) {
-                    console.log('🎬 Renderizando video:', msg.video_url);
+                    console.log('🎬 Renderizando video:', msg.video_url, 'msg.id:', msg.id);
                     // URL para compartir (watch_url si existe, sino construir desde video_url)
                     const watchUrl = msg.watch_url || msg.video_url.replace('/api/video/', '/watch/');
                     const fullUrl = window.location.origin + watchUrl;
-                    const videoId = `video-${msg.id || Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    // Extraer video_id de la URL
-                    const videoIdFromUrl = msg.video_url.split('/').pop().split('?')[0];
-                    const thumbnailUrl = `/api/video/${videoIdFromUrl}/thumbnail`;
+                    
+                    // Usar msg.id como base para el ID único (más confiable que Date.now())
+                    const uniqueId = msg.id || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    const videoId = `video-${uniqueId}`;
+                    
+                    // Extraer video_id de la URL de forma más robusta
+                    let videoIdFromUrl = msg.video_url.split('/').pop().split('?')[0];
+                    // Si no se puede extraer, intentar desde watch_url
+                    if (!videoIdFromUrl || videoIdFromUrl === '') {
+                        videoIdFromUrl = watchUrl.split('/').pop();
+                    }
+                    
+                    const thumbnailUrl = `/api/video/${videoIdFromUrl}/thumbnail?_t=${Date.now()}`;
+                    const videoUrlWithCache = `${msg.video_url}${msg.video_url.includes('?') ? '&' : '?'}_t=${Date.now()}`;
+                    
+                    console.log('🔍 Video ID único:', videoId, 'videoIdFromUrl:', videoIdFromUrl, 'thumbnailUrl:', thumbnailUrl);
                     
                     // Mostrar miniatura primero, video solo cuando se hace click (como Telegram Web)
                     content = `
@@ -1065,10 +1101,11 @@
                                  margin: 8px 0;
                                  cursor: pointer;
                              "
-                             onclick="loadVideoOnClick('${videoId}', '${msg.video_url}')"
+                             onclick="loadVideoOnClick('${videoId}', '${msg.video_url}', '${videoIdFromUrl}')"
                         >
                             <img id="${videoId}-thumbnail" 
                                  src="${thumbnailUrl}" 
+                                 loading="eager"
                                  style="
                                      width: 100%;
                                      height: auto;
@@ -1076,10 +1113,12 @@
                                      max-height: 500px;
                                      object-fit: cover;
                                  "
-                                 onerror="this.style.display='none'; document.getElementById('${videoId}').style.display='block';"
+                                 onerror="console.error('Error cargando miniatura para video ${videoIdFromUrl}'); this.style.display='none'; const videoEl = document.getElementById('${videoId}'); if (videoEl) videoEl.style.display='block';"
+                                 onload="console.log('✅ Miniatura cargada para video ${videoIdFromUrl}');"
                                  alt="Video thumbnail">
                             <video
                                 id="${videoId}"
+                                data-video-id="${videoIdFromUrl}"
                                 controls
                                 playsinline
                                 preload="none"
@@ -1137,6 +1176,24 @@
                     </div>
                 `;
             }).join('');
+            
+            // Precargar todas las miniaturas de una vez (como Telegram Web)
+            // Esto asegura que todas las miniaturas se carguen rápidamente
+            setTimeout(() => {
+                const thumbnails = container.querySelectorAll('img[id$="-thumbnail"]');
+                console.log(`🖼️ Precargando ${thumbnails.length} miniaturas...`);
+                thumbnails.forEach((img, index) => {
+                    // Forzar carga de la miniatura si no se ha cargado
+                    if (!img.complete || img.naturalHeight === 0) {
+                        const originalSrc = img.src;
+                        // Agregar timestamp si no lo tiene para evitar caché
+                        if (!originalSrc.includes('_t=')) {
+                            img.src = originalSrc + (originalSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
+                        }
+                        console.log(`📥 Precargando miniatura ${index + 1}/${thumbnails.length}:`, img.src);
+                    }
+                });
+            }, 100);
             
             // Scroll al final
             container.scrollTop = container.scrollHeight;

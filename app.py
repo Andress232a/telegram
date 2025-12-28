@@ -26,6 +26,23 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('sessions', exist_ok=True)
 # NO crear video_cache_temp - todo se sirve directamente desde la nube de Telegram
 
+# Helper para calcular limit válido para GetFileRequest
+# Telegram requiere que limit sea múltiplo de 1024 y máximo 1MB
+def get_valid_limit(requested_size):
+    """
+    Calcula un limit válido para GetFileRequest.
+    Telegram requiere que limit sea múltiplo de 1024 y máximo 1MB.
+    """
+    max_limit = 1024 * 1024  # 1MB máximo
+    # Redondear hacia arriba al múltiplo de 1024 más cercano
+    valid_limit = ((requested_size + 1023) // 1024) * 1024
+    # Asegurar que no exceda el máximo
+    valid_limit = min(valid_limit, max_limit)
+    # Asegurar que sea al menos 1024 (mínimo válido)
+    if valid_limit < 1024:
+        valid_limit = 1024
+    return valid_limit
+
 # Función para limpiar archivos antiguos de uploads (más de 1 hora)
 def cleanup_old_uploads():
     """Eliminar archivos temporales antiguos de la carpeta uploads"""
@@ -1604,10 +1621,11 @@ def get_video_thumbnail(video_id):
                     
                     # Descargar primeros 2MB para extraer frame
                     try:
+                        thumbnail_limit = get_valid_limit(2 * 1024 * 1024)
                         result = await client(GetFileRequest(
                             location=file_location,
                             offset=0,
-                            limit=2 * 1024 * 1024
+                            limit=thumbnail_limit
                         ))
                         if hasattr(result, 'bytes'):
                             return result.bytes[:1024 * 1024]  # Solo primeros 1MB para thumbnail
@@ -1853,20 +1871,6 @@ def get_video(video_id):
                 
                 chunk_size = end - start + 1
                 
-                # Helper para calcular limit válido (debe ser múltiplo de 1024 y máximo 1MB)
-                def get_valid_limit(requested_size):
-                    # Telegram requiere que limit sea múltiplo de 1024
-                    # Y el máximo es típicamente 1MB (1024*1024)
-                    max_limit = 1024 * 1024  # 1MB máximo
-                    # Redondear hacia arriba al múltiplo de 1024 más cercano
-                    valid_limit = ((requested_size + 1023) // 1024) * 1024
-                    # Asegurar que no exceda el máximo
-                    valid_limit = min(valid_limit, max_limit)
-                    # Asegurar que sea al menos 1024 (mínimo válido)
-                    if valid_limit < 1024:
-                        valid_limit = 1024
-                    return valid_limit
-                
                 # Descargar solo el rango solicitado usando GetFileRequest (streaming progresivo real)
                 async def download_range():
                     # Obtener el InputFileLocation del documento
@@ -2094,20 +2098,6 @@ def get_video(video_id):
                                 print(f"✅ file_reference actualizado")
                         except Exception as ref_error:
                             print(f"⚠️ Error actualizando file_reference: {ref_error}")
-                    
-                    # Helper para calcular limit válido (debe ser múltiplo de 1024 y máximo 1MB)
-                    def get_valid_limit(requested_size):
-                        # Telegram requiere que limit sea múltiplo de 1024
-                        # Y el máximo es típicamente 1MB (1024*1024)
-                        max_limit = 1024 * 1024  # 1MB máximo
-                        # Redondear hacia arriba al múltiplo de 1024 más cercano
-                        valid_limit = ((requested_size + 1023) // 1024) * 1024
-                        # Asegurar que no exceda el máximo
-                        valid_limit = min(valid_limit, max_limit)
-                        # Asegurar que sea al menos 1024 (mínimo válido)
-                        if valid_limit < 1024:
-                            valid_limit = 1024
-                        return valid_limit
                     
                     # Calcular limit válido para el chunk inicial
                     valid_initial_limit = get_valid_limit(initial_size)

@@ -2195,7 +2195,9 @@ def get_video(video_id):
                         raise Exception(f"No se pudo descargar el chunk inicial del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {error_type}: {error_msg}")
                     else:
                         raise Exception(f"Error descargando chunk inicial: {error_type}: {error_msg}")
-            return None
+            
+            # Si llegamos aquí sin retornar, algo salió mal
+            raise Exception("No se pudo descargar el chunk inicial del video: función retornó None")
         
         # Timeout dinámico basado en el tamaño del video
         # Para videos muy grandes (4GB+), necesitamos más tiempo
@@ -2220,7 +2222,22 @@ def get_video(video_id):
                     return jsonify({'error': 'No se pudo obtener un loop válido'}), 500
             
             print(f"⏱️ Timeout configurado: {timeout_initial}s para video de {file_size / (1024*1024*1024):.2f}GB")
-            initial_data = run_async(download_initial_chunk(), client_loop, timeout=timeout_initial)
+            try:
+                initial_data = run_async(download_initial_chunk(), client_loop, timeout=timeout_initial)
+            except asyncio.TimeoutError:
+                print(f"⏱️ Timeout al descargar chunk inicial del video {video_id}")
+                return jsonify({'error': 'Tiempo de espera agotado al descargar el video. Intenta más tarde.'}), 504
+            except Exception as run_error:
+                error_type = type(run_error).__name__
+                error_msg = str(run_error)
+                print(f"❌ Error en run_async para chunk inicial: {error_type}: {error_msg}")
+                import traceback
+                print(traceback.format_exc())
+                return jsonify({
+                    'error': f'Error al descargar el video: {error_msg}',
+                    'error_type': error_type,
+                    'video_id': video_id
+                }), 500
             
             if initial_data:
                 headers = {
@@ -2235,6 +2252,7 @@ def get_video(video_id):
                     # Servir solo los primeros bytes, el navegador hará range requests
                     return Response(initial_data, 206, headers, mimetype=mime_type)
             else:
+                print(f"❌ download_initial_chunk retornó None para video {video_id}")
                 return jsonify({'error': 'No se pudo obtener el video'}), 500
         except Exception as e:
             import traceback

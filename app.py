@@ -1693,12 +1693,21 @@ def get_video_thumbnail(video_id):
 @app.route('/api/video/<video_id>')
 def get_video(video_id):
     """Obtener el video directamente desde la nube de Telegram (sin caché)"""
+    import sys
+    import traceback
+    
+    # Forzar flush de stdout para que los logs aparezcan inmediatamente
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
     try:
-        print(f"🎬 Solicitud de video: {video_id}")
+        print(f"🎬 Solicitud de video: {video_id}", flush=True)
+        print(f"🔍 Request headers: {dict(request.headers)}", flush=True)
+        print(f"🔍 Session data: {dict(session)}", flush=True)
         # Verificar si hay range request
         range_header = request.headers.get('Range', None)
         if range_header:
-            print(f"📥 Range request: {range_header}")
+            print(f"📥 Range request: {range_header}", flush=True)
         
         # Verificar conexión a base de datos primero
         try:
@@ -2431,13 +2440,18 @@ def get_video(video_id):
             return jsonify(error_response), 500
             
     except Exception as e:
+        import sys
         import traceback
         error_type = type(e).__name__
         error_msg = str(e)
         traceback_str = traceback.format_exc()
-        print(f"❌ ERROR GENERAL obteniendo video {video_id}: {error_type}: {error_msg}")
-        print(f"📍 Traceback completo:")
-        print(traceback_str)
+        print(f"❌ ERROR GENERAL obteniendo video {video_id}: {error_type}: {error_msg}", flush=True)
+        print(f"📍 Traceback completo:", flush=True)
+        print(traceback_str, flush=True)
+        # También escribir a stderr para asegurar que se vea
+        sys.stderr.write(f"❌ ERROR GENERAL obteniendo video {video_id}: {error_type}: {error_msg}\n")
+        sys.stderr.write(f"📍 Traceback completo:\n{traceback_str}\n")
+        sys.stderr.flush()
         
         # Información adicional para debugging
         debug_info = {
@@ -2599,6 +2613,27 @@ def unauthorized(error):
 if __name__ == '__main__':
     # En producción, usar debug=False
     import os
+    import sys
+    
+    # Configurar logging para que todo se vea en stdout/stderr
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.StreamHandler(sys.stderr)
+        ]
+    )
+    
+    # Forzar que print() siempre haga flush
+    import functools
+    original_print = print
+    def print_with_flush(*args, **kwargs):
+        kwargs.setdefault('flush', True)
+        original_print(*args, **kwargs)
+    print = print_with_flush
+    
     debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     app.run(debug=debug_mode, host='0.0.0.0', port=5000)
 

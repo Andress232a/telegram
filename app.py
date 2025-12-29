@@ -1399,11 +1399,15 @@ def upload_video():
         return jsonify({'error': 'No se encontró el archivo de video'}), 400
     
     file = request.files['video']
+    print(f"📁 [UPLOAD] Archivo obtenido de request.files", flush=True)
+    
     if file.filename == '':
         print("❌ [UPLOAD] Error: filename vacío", flush=True)
         return jsonify({'error': 'No se seleccionó ningún archivo'}), 400
     
     print(f"📁 [UPLOAD] Archivo recibido: {file.filename}", flush=True)
+    print(f"📁 [UPLOAD] Tipo de objeto file: {type(file)}", flush=True)
+    print(f"📁 [UPLOAD] file.stream disponible: {hasattr(file, 'stream')}", flush=True)
     
     filename = secure_filename(file.filename)
     timestamp = int(time.time())
@@ -1442,6 +1446,17 @@ def upload_video():
     
     print(f"💾 [UPLOAD] Iniciando guardado de archivo: {local_path}", flush=True)
     print(f"📦 [UPLOAD] Tamaño del archivo recibido: {file_size_from_request if file_size_from_request else 'desconocido'} bytes", flush=True)
+    
+    # IMPORTANTE: Devolver respuesta INMEDIATAMENTE antes de procesar el archivo
+    # Esto evita que Flask bloquee mientras lee el archivo completo
+    print(f"📤 [UPLOAD] Preparando respuesta inmediata con upload_id: {upload_id}", flush=True)
+    
+    # Estimar el tamaño del archivo para el progreso inicial
+    if file_size_from_request:
+        upload_progress[upload_id]['total'] = file_size_from_request
+    else:
+        # Si no conocemos el tamaño, usar un estimado grande
+        upload_progress[upload_id]['total'] = 4 * 1024 * 1024 * 1024  # 4GB estimado
     
     # Guardar archivo en un thread separado para no bloquear la respuesta
     # IMPORTANTE: Flask ya tiene el archivo en memoria/buffer, así que podemos leerlo
@@ -1510,30 +1525,16 @@ def upload_video():
                 upload_progress[upload_id_param]['error'] = error_msg
             return None
     
-    # Iniciar guardado en thread separado
+    # Iniciar guardado en thread separado ANTES de devolver respuesta
+    print(f"🧵 [UPLOAD] Iniciando thread de guardado...", flush=True)
     save_thread = threading.Thread(
         target=lambda: save_file_async(file, local_path, upload_id, file_size_from_request),
         daemon=True
     )
     save_thread.start()
+    print(f"🧵 [UPLOAD] Thread de guardado iniciado", flush=True)
     
-    # Esperar un momento para que el thread inicie
-    time.sleep(0.1)
-    
-    # Verificar si hubo un error inmediato
-    if upload_progress[upload_id].get('status') == 'error':
-        error_msg = upload_progress[upload_id].get('error', 'Error desconocido')
-        return jsonify({'error': error_msg}), 500
-    
-    # Estimar el tamaño del archivo para el progreso inicial
-    if file_size_from_request:
-        upload_progress[upload_id]['total'] = file_size_from_request
-    else:
-        # Si no conocemos el tamaño, usar un estimado grande
-        upload_progress[upload_id]['total'] = 4 * 1024 * 1024 * 1024  # 4GB estimado
-    
-    # Devolver upload_id INMEDIATAMENTE para que el frontend pueda monitorear
-    # La subida se ejecutará en segundo plano
+    # Definir función de subida en background ANTES de devolver respuesta
     def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
             # ESPERAR a que el archivo se guarde completamente antes de iniciar la subida
@@ -1541,7 +1542,7 @@ def upload_video():
             wait_interval = 2  # Verificar cada 2 segundos
             waited = 0
             
-            print(f"⏳ Esperando a que el archivo se guarde completamente: {local_path_param}")
+            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo se guarde completamente: {local_path_param}", flush=True)
             while waited < max_wait_time:
                 # Verificar si el archivo existe y el estado cambió de 'saving' a 'uploading'
                 if os.path.exists(local_path_param):
@@ -1601,8 +1602,8 @@ def upload_video():
                 upload_progress[upload_id_param]['progress'] = 50  # 50% = guardado completo
                 upload_progress[upload_id_param]['message'] = 'Subiendo a Telegram...'
             
-            print(f"🚀 Iniciando subida en background - Upload ID: {upload_id_param}")
-            print(f"📋 Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}")
+            print(f"🚀 [UPLOAD-BG] Iniciando subida en background - Upload ID: {upload_id_param}", flush=True)
+            print(f"📋 [UPLOAD-BG] Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}", flush=True)
             
             # IMPORTANTE: NO crear un cliente nuevo con la misma sesión SQLite porque causa "database is locked"
             # En su lugar, usar el cliente principal pero ejecutar la subida de forma asíncrona
@@ -1757,13 +1758,14 @@ def upload_video():
             print(traceback.format_exc())
     
     # Ejecutar subida en segundo plano (pasar valores como parámetros, no usar sesión)
-    import threading
+    print(f"🧵 [UPLOAD] Iniciando thread de subida a Telegram...", flush=True)
     upload_thread = threading.Thread(
         target=upload_in_background, 
-        args=(phone, api_id, api_hash, session_name, chat_id, local_path, filename, upload_id, timestamp, file_size, description),
+        args=(phone, api_id, api_hash, session_name, chat_id, local_path, filename, upload_id, timestamp, file_size_from_request or 0, description),
         daemon=True
     )
     upload_thread.start()
+    print(f"🧵 [UPLOAD] Thread de subida iniciado", flush=True)
     
     # Limpiar progreso después de un tiempo (solo si está completado o con error)
     def cleanup_progress():
@@ -1772,28 +1774,29 @@ def upload_video():
             status = upload_progress[upload_id].get('status', 'unknown')
             # Solo limpiar si está completado o con error
             if status in ['completed', 'error']:
-                print(f"🗑️ Limpiando upload_id completado: {upload_id}")
+                print(f"🗑️ Limpiando upload_id completado: {upload_id}", flush=True)
                 del upload_progress[upload_id]
             else:
-                print(f"⚠️ Upload ID {upload_id} aún en progreso ({status}), no limpiando")
+                print(f"⚠️ Upload ID {upload_id} aún en progreso ({status}), no limpiando", flush=True)
     threading.Thread(target=cleanup_progress, daemon=True).start()
     
-    # Devolver upload_id INMEDIATAMENTE
-    print(f"📤 Devolviendo upload_id: {upload_id}")
-    print(f"📋 Upload IDs disponibles antes de devolver: {list(upload_progress.keys())}")
+    # Devolver upload_id INMEDIATAMENTE (ANTES de que Flask termine de leer el archivo)
+    print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATAMENTE con upload_id: {upload_id}", flush=True)
+    print(f"📋 [UPLOAD] Upload IDs disponibles antes de devolver: {list(upload_progress.keys())}", flush=True)
     
     # Asegurarse de que el upload_id esté en el diccionario antes de devolver
     if upload_id not in upload_progress:
-        print(f"⚠️ ADVERTENCIA: upload_id {upload_id} no está en upload_progress, agregándolo...")
-        upload_progress[upload_id] = {'progress': 0, 'status': 'uploading', 'current': 0, 'total': file_size}
+        print(f"⚠️ [UPLOAD] ADVERTENCIA: upload_id {upload_id} no está en upload_progress, agregándolo...", flush=True)
+        upload_progress[upload_id] = {'progress': 0, 'status': 'saving', 'current': 0, 'total': file_size_from_request or 0}
     
     # Verificar una vez más antes de devolver
-    print(f"✅ Verificación final - upload_id en diccionario: {upload_id in upload_progress}")
+    print(f"✅ [UPLOAD] Verificación final - upload_id en diccionario: {upload_id in upload_progress}", flush=True)
+    print("=" * 80, flush=True)
     
     return jsonify({
         'message': 'Subida iniciada',
         'upload_id': upload_id,
-        'status': 'uploading'
+        'status': 'saving'
     })
 
 @app.route('/api/upload/progress/<upload_id>', methods=['GET'])

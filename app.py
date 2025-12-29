@@ -2093,24 +2093,34 @@ def get_video(video_id):
                             # CRÍTICO: Si valid_limit excede remaining_size, ajustarlo
                             # Telegram no permite que limit exceda el tamaño restante
                             if valid_limit > remaining_size:
-                                # Redondear remaining_size hacia abajo al múltiplo de 1024 más cercano
-                                valid_limit = (remaining_size // 1024) * 1024
-                                # Si es menor que 1024, usar remaining_size exacto (Telegram lo permite si es menor que 1024)
-                                if valid_limit < 1024 and remaining_size > 0:
+                                # Si remaining_size es menor que 1024, usar remaining_size exacto
+                                # Telegram permite limit menor que 1024 si es el tamaño restante
+                                if remaining_size < 1024 and remaining_size > 0:
                                     valid_limit = remaining_size
-                                elif valid_limit < 1024:
-                                    valid_limit = 1024  # Mínimo válido
+                                else:
+                                    # Redondear remaining_size hacia abajo al múltiplo de 1024 más cercano
+                                    valid_limit = (remaining_size // 1024) * 1024
+                                    # Asegurar que sea al menos 1024 si remaining_size es >= 1024
+                                    if valid_limit < 1024 and remaining_size >= 1024:
+                                        valid_limit = 1024
                             
-                            # Verificación final absoluta
+                            # Verificación final absoluta: NUNCA exceder remaining_size
                             if valid_limit > remaining_size:
-                                print(f"⚠️ ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size}), forzando remaining_size", flush=True)
-                                valid_limit = remaining_size
-                                if valid_limit >= 1024:
-                                    valid_limit = (valid_limit // 1024) * 1024
-                                if valid_limit < 1024 and remaining_size > 0:
+                                print(f"⚠️ ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size}), ajustando...", flush=True)
+                                # Si remaining_size es menor que 1024, usar exactamente remaining_size
+                                if remaining_size < 1024 and remaining_size > 0:
                                     valid_limit = remaining_size
-                                elif valid_limit < 1024:
-                                    valid_limit = 1024
+                                else:
+                                    # Redondear hacia abajo al múltiplo de 1024 más cercano
+                                    valid_limit = (remaining_size // 1024) * 1024
+                                    # Si después de redondear es 0 pero remaining_size >= 1024, usar 1024
+                                    if valid_limit == 0 and remaining_size >= 1024:
+                                        valid_limit = 1024
+                            
+                            # Verificación final: asegurar que no exceda remaining_size
+                            if valid_limit > remaining_size:
+                                print(f"⚠️ ERROR FINAL: valid_limit ({valid_limit}) aún excede remaining_size ({remaining_size}), usando remaining_size exacto", flush=True)
+                                valid_limit = remaining_size
                             
                             print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}", flush=True)
                             result = await client(GetFileRequest(

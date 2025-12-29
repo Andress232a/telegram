@@ -2082,12 +2082,35 @@ def get_video(video_id):
                             
                             # El limit debe ser el mínimo entre:
                             # 1. El chunk_size solicitado
-                            # 2. El tamaño restante del archivo
+                            # 2. El tamaño restante del archivo (CRÍTICO: nunca exceder)
                             # 3. El máximo permitido según la posición
                             requested_limit = min(chunk_size, remaining_size, max_limit)
                             
                             # CRÍTICO: Usar la función get_valid_limit para asegurar que sea múltiplo de 1024
+                            # PERO también asegurar que no exceda remaining_size
                             valid_limit = get_valid_limit(requested_limit)
+                            
+                            # CRÍTICO: Si valid_limit excede remaining_size, ajustarlo
+                            # Telegram no permite que limit exceda el tamaño restante
+                            if valid_limit > remaining_size:
+                                # Redondear remaining_size hacia abajo al múltiplo de 1024 más cercano
+                                valid_limit = (remaining_size // 1024) * 1024
+                                # Si es menor que 1024, usar remaining_size exacto (Telegram lo permite si es menor que 1024)
+                                if valid_limit < 1024 and remaining_size > 0:
+                                    valid_limit = remaining_size
+                                elif valid_limit < 1024:
+                                    valid_limit = 1024  # Mínimo válido
+                            
+                            # Verificación final absoluta
+                            if valid_limit > remaining_size:
+                                print(f"⚠️ ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size}), forzando remaining_size", flush=True)
+                                valid_limit = remaining_size
+                                if valid_limit >= 1024:
+                                    valid_limit = (valid_limit // 1024) * 1024
+                                if valid_limit < 1024 and remaining_size > 0:
+                                    valid_limit = remaining_size
+                                elif valid_limit < 1024:
+                                    valid_limit = 1024
                             
                             print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}", flush=True)
                             result = await client(GetFileRequest(
@@ -2122,8 +2145,17 @@ def get_video(video_id):
                                 
                                 while remaining > 0:
                                     current_chunk_size = min(chunk_limit, remaining)
-                                    # Asegurar que el limit sea múltiplo de 1024
+                                    # Asegurar que el limit sea múltiplo de 1024 y no exceda remaining
                                     valid_chunk_limit = get_valid_limit(current_chunk_size)
+                                    
+                                    # CRÍTICO: Asegurar que no exceda remaining
+                                    if valid_chunk_limit > remaining:
+                                        valid_chunk_limit = (remaining // 1024) * 1024
+                                        if valid_chunk_limit < 1024 and remaining > 0:
+                                            valid_chunk_limit = remaining
+                                        elif valid_chunk_limit < 1024:
+                                            valid_chunk_limit = 1024
+                                    
                                     try:
                                         result = await client(GetFileRequest(
                                             location=file_location,
@@ -2280,8 +2312,25 @@ def get_video(video_id):
                             print(f"⚠️ Error actualizando file_reference: {ref_error}")
                     
                     # Calcular limit válido para el chunk inicial
-                    valid_initial_limit = get_valid_limit(initial_size)
-                    print(f"🔍 Intentando GetFileRequest: offset=0, limit={valid_initial_limit} (solicitado: {initial_size}), file_id={document.id}")
+                    # CRÍTICO: El limit no puede exceder el tamaño del archivo
+                    max_allowed_limit = min(initial_size, file_size)
+                    valid_initial_limit = get_valid_limit(max_allowed_limit)
+                    
+                    # Verificación final: asegurar que no exceda file_size
+                    if valid_initial_limit > file_size:
+                        valid_initial_limit = (file_size // 1024) * 1024
+                        if valid_initial_limit < 1024 and file_size > 0:
+                            valid_initial_limit = file_size
+                        elif valid_initial_limit < 1024:
+                            valid_initial_limit = 1024
+                    
+                    # Verificación final: asegurar que sea múltiplo de 1024 (o el tamaño exacto si es menor)
+                    if valid_initial_limit >= 1024 and valid_initial_limit % 1024 != 0:
+                        valid_initial_limit = (valid_initial_limit // 1024) * 1024
+                        if valid_initial_limit < 1024:
+                            valid_initial_limit = 1024
+                    
+                    print(f"🔍 Intentando GetFileRequest: offset=0, limit={valid_initial_limit} (solicitado: {initial_size}, file_size: {file_size}), file_id={document.id}, limit%1024={valid_initial_limit % 1024 if valid_initial_limit >= 1024 else 'N/A'}, es_multiplo_1024={valid_initial_limit % 1024 == 0 if valid_initial_limit >= 1024 else True}", flush=True)
                     result = await client(GetFileRequest(
                         location=file_location,
                         offset=0,
@@ -2321,8 +2370,17 @@ def get_video(video_id):
                         
                         while remaining > 0:
                             current_chunk_size = min(chunk_limit, remaining)
-                            # Asegurar que el limit sea múltiplo de 1024
+                            # Asegurar que el limit sea múltiplo de 1024 y no exceda remaining
                             valid_chunk_limit = get_valid_limit(current_chunk_size)
+                            
+                            # CRÍTICO: Asegurar que no exceda remaining
+                            if valid_chunk_limit > remaining:
+                                valid_chunk_limit = (remaining // 1024) * 1024
+                                if valid_chunk_limit < 1024 and remaining > 0:
+                                    valid_chunk_limit = remaining
+                                elif valid_chunk_limit < 1024:
+                                    valid_chunk_limit = 1024
+                            
                             try:
                                 result = await client(GetFileRequest(
                                     location=file_location,

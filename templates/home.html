@@ -1366,11 +1366,14 @@
                         closeUploadProgress();
                     }, 2000);
                 }
+            } else if (status === 'saving') {
+                title.textContent = '💾 Guardando archivo en servidor...';
+                text.textContent = 'Esperando...';
             } else if (status === 'error') {
                 title.textContent = '❌ Error al subir video';
                 setTimeout(() => {
                     closeUploadProgress();
-                }, 3000);
+                }, 5000);
             }
         }
         
@@ -1410,9 +1413,24 @@
                         const data = await response.json();
                         const progress = data.progress || 0;
                         const status = data.status || 'uploading';
+                        const message = data.message || '';
+                        const error = data.error || '';
                         
                         // Actualizar progreso
                         updateUploadProgress(progress, status);
+                        
+                        // Mostrar mensajes de estado
+                        if (message) {
+                            console.log(`ℹ️ ${message}`);
+                        }
+                        
+                        // Mostrar errores si existen
+                        if (error) {
+                            console.error(`❌ Error: ${error}`);
+                            if (data.error_details) {
+                                console.error(`❌ Detalles: ${data.error_details}`);
+                            }
+                        }
                         
                         // Loggear solo cada 10% para no saturar la consola
                         if (progress % 10 === 0 || progress === 100) {
@@ -1433,6 +1451,7 @@
                         } else if (status === 'error') {
                             clearInterval(progressInterval);
                             progressInterval = null;
+                            console.error('❌ Subida falló:', error);
                         }
                     } else if (response.status === 404) {
                         // Si no se encuentra, puede ser que aún no se haya iniciado

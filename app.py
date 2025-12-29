@@ -1408,11 +1408,29 @@ def upload_video():
     
     # Guardar archivo temporalmente en local
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{timestamp}_{filename}")
-    file.save(local_path)
-    file_size = os.path.getsize(local_path)
-    upload_progress[upload_id]['total'] = file_size
-    print(f"💾 Archivo guardado temporalmente: {local_path} ({file_size} bytes)")
-    print(f"📋 Upload IDs disponibles después de guardar archivo: {list(upload_progress.keys())}")
+    
+    # Actualizar estado para indicar que se está guardando el archivo
+    upload_progress[upload_id]['status'] = 'saving'
+    upload_progress[upload_id]['message'] = 'Guardando archivo en servidor...'
+    
+    print(f"💾 Iniciando guardado de archivo: {local_path}")
+    print(f"📦 Tamaño del archivo recibido: {file.content_length if hasattr(file, 'content_length') else 'desconocido'} bytes")
+    
+    try:
+        # Guardar archivo (esto puede tardar varios minutos para archivos de 4GB)
+        file.save(local_path)
+        file_size = os.path.getsize(local_path)
+        upload_progress[upload_id]['total'] = file_size
+        upload_progress[upload_id]['status'] = 'uploading'
+        upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
+        print(f"✅ Archivo guardado temporalmente: {local_path} ({file_size} bytes)")
+        print(f"📋 Upload IDs disponibles después de guardar archivo: {list(upload_progress.keys())}")
+    except Exception as e:
+        error_msg = f"Error guardando archivo: {str(e)}"
+        print(f"❌ {error_msg}")
+        upload_progress[upload_id]['status'] = 'error'
+        upload_progress[upload_id]['error'] = error_msg
+        return jsonify({'error': error_msg}), 500
     
     # Devolver upload_id INMEDIATAMENTE para que el frontend pueda monitorear
     # La subida se ejecutará en segundo plano
@@ -1545,10 +1563,19 @@ def upload_video():
             upload_progress[upload_id_param]['chat_id'] = chat_id_str
             
         except Exception as e:
-            # Marcar como error
+            # Marcar como error con información detallada
+            import traceback
+            error_traceback = traceback.format_exc()
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            
+            print(f"❌ ERROR en subida en background - Upload ID: {upload_id_param}")
+            print(f"❌ Error: {error_msg}")
+            print(f"❌ Traceback completo:\n{error_traceback}")
+            
             if upload_id_param in upload_progress:
                 upload_progress[upload_id_param]['status'] = 'error'
-                upload_progress[upload_id_param]['error'] = str(e)
+                upload_progress[upload_id_param]['error'] = error_msg
+                upload_progress[upload_id_param]['error_details'] = error_traceback
             
             # Limpiar archivo local en caso de error
             try:

@@ -37,15 +37,29 @@ def get_valid_limit(requested_size):
     Calcula un limit válido para GetFileRequest.
     Telegram requiere que limit sea múltiplo de 1024 y máximo 1MB.
     """
-    max_limit = 1024 * 1024  # 1MB máximo
+    # Validar que requested_size sea un número válido
+    if not isinstance(requested_size, (int, float)) or requested_size <= 0:
+        requested_size = 1024  # Valor por defecto seguro
+    
+    max_limit = 1024 * 1024  # 1MB máximo (1048576 bytes)
+    min_limit = 1024  # Mínimo válido
+    
     # Redondear hacia arriba al múltiplo de 1024 más cercano
-    valid_limit = ((requested_size + 1023) // 1024) * 1024
+    # Usar floor division para asegurar que siempre sea múltiplo de 1024
+    valid_limit = ((int(requested_size) + 1023) // 1024) * 1024
+    
     # Asegurar que no exceda el máximo
     valid_limit = min(valid_limit, max_limit)
-    # Asegurar que sea al menos 1024 (mínimo válido)
-    if valid_limit < 1024:
-        valid_limit = 1024
-    return valid_limit
+    
+    # Asegurar que sea al menos el mínimo válido
+    valid_limit = max(valid_limit, min_limit)
+    
+    # Verificación final: asegurar que sea múltiplo de 1024
+    if valid_limit % 1024 != 0:
+        valid_limit = ((valid_limit // 1024) + 1) * 1024
+        valid_limit = min(valid_limit, max_limit)
+    
+    return int(valid_limit)
 
 # Función para limpiar archivos antiguos de uploads (más de 1 hora)
 def cleanup_old_uploads():
@@ -2007,6 +2021,13 @@ def get_video(video_id):
                 
                 chunk_size = end - start + 1
                 
+                # Validar chunk_size
+                if chunk_size <= 0:
+                    print(f"⚠️ chunk_size inválido: {chunk_size}, usando 1MB por defecto")
+                    chunk_size = 1024 * 1024
+                
+                print(f"📊 Range request: start={start}, end={end}, chunk_size={chunk_size}, file_size={file_size}")
+                
                 # Descargar solo el rango solicitado usando GetFileRequest (streaming progresivo real)
                 async def download_range():
                     # Obtener el InputFileLocation del documento
@@ -2044,8 +2065,26 @@ def get_video(video_id):
                         # Esto permite streaming progresivo real - el video empieza a reproducirse inmediatamente
                         try:
                             # Calcular limit válido (múltiplo de 1024, máximo 1MB)
-                            valid_limit = get_valid_limit(chunk_size)
-                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}), file_id={document.id}")
+                            # Asegurar que chunk_size sea válido antes de calcular limit
+                            safe_chunk_size = max(1024, min(chunk_size, 1024 * 1024))
+                            valid_limit = get_valid_limit(safe_chunk_size)
+                            
+                            # Validación final del limit antes de enviar
+                            if valid_limit % 1024 != 0:
+                                print(f"⚠️ ERROR: valid_limit no es múltiplo de 1024: {valid_limit}, corrigiendo...")
+                                valid_limit = ((valid_limit // 1024)) * 1024
+                                if valid_limit < 1024:
+                                    valid_limit = 1024
+                            
+                            if valid_limit < 1024:
+                                print(f"⚠️ ERROR: valid_limit es menor que 1024: {valid_limit}, usando 1024")
+                                valid_limit = 1024
+                            
+                            if valid_limit > 1024 * 1024:
+                                print(f"⚠️ ERROR: valid_limit excede 1MB: {valid_limit}, usando 1MB")
+                                valid_limit = 1024 * 1024
+                            
+                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, safe: {safe_chunk_size}), file_id={document.id}, limit%1024={valid_limit % 1024}", flush=True)
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,

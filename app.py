@@ -1378,18 +1378,32 @@ def send_message():
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
     """Subir video a Telegram: guarda temporalmente en local, sube a la nube, y borra local"""
+    print("=" * 80, flush=True)
+    print("🚀 [UPLOAD] Endpoint /api/upload llamado", flush=True)
+    print(f"📋 Método: {request.method}", flush=True)
+    print(f"📋 Headers: {dict(request.headers)}", flush=True)
+    print(f"📋 Form data keys: {list(request.form.keys())}", flush=True)
+    print(f"📋 Files keys: {list(request.files.keys())}", flush=True)
+    
     if 'phone' not in session:
+        print("❌ [UPLOAD] Error: No hay sesión de Telegram", flush=True)
         return jsonify({'error': 'No estás conectado a Telegram'}), 401
     
     chat_id = request.form.get('chat_id', 'me')  # Por defecto a "me" (Saved Messages)
     description = request.form.get('description', '')  # Descripción opcional del video
+    print(f"📋 Chat ID recibido: {chat_id}", flush=True)
+    print(f"📋 Descripción: {description}", flush=True)
     
     if 'video' not in request.files:
+        print("❌ [UPLOAD] Error: No se encontró 'video' en request.files", flush=True)
         return jsonify({'error': 'No se encontró el archivo de video'}), 400
     
     file = request.files['video']
     if file.filename == '':
+        print("❌ [UPLOAD] Error: filename vacío", flush=True)
         return jsonify({'error': 'No se seleccionó ningún archivo'}), 400
+    
+    print(f"📁 [UPLOAD] Archivo recibido: {file.filename}", flush=True)
     
     filename = secure_filename(file.filename)
     timestamp = int(time.time())
@@ -1402,9 +1416,9 @@ def upload_video():
     session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
     
     # Inicializar progreso ANTES de guardar el archivo
-    upload_progress[upload_id] = {'progress': 0, 'status': 'uploading', 'current': 0, 'total': 0}
-    print(f"✅ Upload ID creado: {upload_id}")
-    print(f"📋 Upload IDs disponibles después de crear: {list(upload_progress.keys())}")
+    upload_progress[upload_id] = {'progress': 0, 'status': 'saving', 'current': 0, 'total': 0, 'message': 'Iniciando subida...'}
+    print(f"✅ [UPLOAD] Upload ID creado: {upload_id}", flush=True)
+    print(f"📋 [UPLOAD] Upload IDs disponibles después de crear: {list(upload_progress.keys())}", flush=True)
     
     # Guardar archivo temporalmente en local
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{timestamp}_{filename}")
@@ -1426,8 +1440,8 @@ def upload_video():
         except:
             pass
     
-    print(f"💾 Iniciando guardado de archivo: {local_path}")
-    print(f"📦 Tamaño del archivo recibido: {file_size_from_request if file_size_from_request else 'desconocido'} bytes")
+    print(f"💾 [UPLOAD] Iniciando guardado de archivo: {local_path}", flush=True)
+    print(f"📦 [UPLOAD] Tamaño del archivo recibido: {file_size_from_request if file_size_from_request else 'desconocido'} bytes", flush=True)
     
     # Guardar archivo en un thread separado para no bloquear la respuesta
     # IMPORTANTE: Flask ya tiene el archivo en memoria/buffer, así que podemos leerlo
@@ -1437,13 +1451,17 @@ def upload_video():
             chunk_size = 1024 * 1024  # 1MB chunks
             total_saved = 0
             
+            print(f"💾 [SAVE] Iniciando guardado asíncrono para upload_id: {upload_id_param}", flush=True)
+            print(f"💾 [SAVE] Ruta destino: {save_path}", flush=True)
+            
             # Si conocemos el tamaño, actualizarlo
             if estimated_size and estimated_size > 0:
                 upload_progress[upload_id_param]['total'] = estimated_size
-                print(f"📊 Tamaño estimado del archivo: {estimated_size} bytes ({estimated_size / (1024*1024*1024):.2f} GB)")
+                print(f"📊 [SAVE] Tamaño estimado del archivo: {estimated_size} bytes ({estimated_size / (1024*1024*1024):.2f} GB)", flush=True)
             
             # Resetear el stream del archivo al inicio
             file_obj.seek(0)
+            print(f"💾 [SAVE] Stream reseteado, comenzando lectura...", flush=True)
             
             with open(save_path, 'wb') as f:
                 while True:
@@ -1463,30 +1481,30 @@ def upload_video():
                         if save_progress % 5 == 0:
                             mb_saved = total_saved / (1024 * 1024)
                             mb_total = estimated_size / (1024 * 1024) if estimated_size else 0
-                            print(f"💾 Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)")
+                            print(f"💾 [SAVE] Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
                     else:
                         # Si no conocemos el tamaño, mostrar MB guardados
                         mb_saved = total_saved / (1024 * 1024)
                         upload_progress[upload_id_param]['current'] = total_saved
                         upload_progress[upload_id_param]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
                         if int(mb_saved) % 100 == 0:  # Loggear cada 100MB
-                            print(f"💾 Guardando: {mb_saved:.1f}MB guardados...")
+                            print(f"💾 [SAVE] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
             
             file_size = os.path.getsize(save_path)
             upload_progress[upload_id_param]['total'] = file_size
             upload_progress[upload_id_param]['status'] = 'uploading'
             upload_progress[upload_id_param]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
             upload_progress[upload_id_param]['progress'] = 50  # 50% = guardado completo
-            print(f"✅ Archivo guardado temporalmente: {save_path} ({file_size} bytes, {file_size / (1024*1024*1024):.2f} GB)")
-            print(f"📋 Upload IDs disponibles después de guardar archivo: {list(upload_progress.keys())}")
+            print(f"✅ [SAVE] Archivo guardado temporalmente: {save_path} ({file_size} bytes, {file_size / (1024*1024*1024):.2f} GB)", flush=True)
+            print(f"📋 [SAVE] Upload IDs disponibles después de guardar archivo: {list(upload_progress.keys())}", flush=True)
             
             return file_size
         except Exception as e:
             import traceback
             error_traceback = traceback.format_exc()
             error_msg = f"Error guardando archivo: {str(e)}"
-            print(f"❌ {error_msg}")
-            print(f"❌ Traceback:\n{error_traceback}")
+            print(f"❌ [SAVE] {error_msg}", flush=True)
+            print(f"❌ [SAVE] Traceback:\n{error_traceback}", flush=True)
             if upload_id_param in upload_progress:
                 upload_progress[upload_id_param]['status'] = 'error'
                 upload_progress[upload_id_param]['error'] = error_msg

@@ -19,7 +19,7 @@ from contextlib import contextmanager
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2GB max
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024  # 5GB max (para videos grandes de hasta 4GB)
 # Configuración de sesiones para que funcionen correctamente
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = False  # Cambiar a True en producción con HTTPS
@@ -1497,9 +1497,9 @@ def upload_video():
                 return message
             
             # Ejecutar usando el loop del cliente con timeout largo para videos grandes
-            # Calcular timeout basado en el tamaño del archivo (1 minuto por cada 10MB, mínimo 5 minutos)
+            # Calcular timeout basado en el tamaño del archivo (6 segundos por MB, mínimo 10 minutos)
             file_size_mb = file_size_param / (1024 * 1024)
-            timeout_seconds = max(300, int(file_size_mb * 6))  # Mínimo 5 minutos, 6 segundos por MB
+            timeout_seconds = max(600, int(file_size_mb * 6))  # Mínimo 10 minutos, 6 segundos por MB
             print(f"⏱️ Timeout configurado: {timeout_seconds} segundos para archivo de {file_size_mb:.2f} MB")
             
             message = run_async(upload(), client_loop, timeout=timeout_seconds)

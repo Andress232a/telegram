@@ -2086,28 +2086,10 @@ def get_video(video_id):
                             # 3. El máximo permitido según la posición
                             requested_limit = min(chunk_size, remaining_size, max_limit)
                             
-                            # CRÍTICO: Telegram requiere que limit sea múltiplo de 1024
-                            # Redondear hacia abajo al múltiplo de 1024 más cercano
-                            valid_limit = ((int(requested_limit) // 1024)) * 1024
+                            # CRÍTICO: Usar la función get_valid_limit para asegurar que sea múltiplo de 1024
+                            valid_limit = get_valid_limit(requested_limit)
                             
-                            # Asegurar que sea al menos 1024 bytes (mínimo válido para Telegram)
-                            # Si remaining_size es menor que 1024, usar 1024 de todas formas
-                            # Telegram devolverá solo los bytes disponibles
-                            if valid_limit < 1024:
-                                valid_limit = 1024
-                            
-                            # Verificación final: asegurar que sea múltiplo de 1024
-                            if valid_limit % 1024 != 0:
-                                print(f"⚠️ ERROR: valid_limit no es múltiplo de 1024: {valid_limit}, corrigiendo...", flush=True)
-                                valid_limit = ((valid_limit // 1024)) * 1024
-                                if valid_limit < 1024:
-                                    valid_limit = 1024
-                            
-                            # Verificación final absoluta antes de llamar a GetFileRequest
-                            assert valid_limit >= 1024, f"valid_limit debe ser al menos 1024, pero es {valid_limit}"
-                            assert valid_limit % 1024 == 0, f"valid_limit debe ser múltiplo de 1024, pero es {valid_limit} (resto: {valid_limit % 1024})"
-                            
-                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}", flush=True)
+                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}", flush=True)
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,

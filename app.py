@@ -2067,38 +2067,69 @@ def get_video(video_id):
                             # Calcular el tamaño restante del archivo desde el offset
                             remaining_size = file_size - start
                             
+                            # Si estamos cerca del final del archivo (último 10%), usar chunks más pequeños
+                            # Telegram puede tener problemas con offsets grandes y limits grandes
+                            file_progress = (start / file_size) if file_size > 0 else 0
+                            is_near_end = file_progress > 0.9
+                            
+                            # Ajustar el máximo permitido según la posición en el archivo
+                            if is_near_end:
+                                # Cerca del final: usar máximo 512KB para evitar problemas
+                                max_limit = 512 * 1024  # 512KB
+                                print(f"⚠️ Cerca del final del archivo ({file_progress*100:.1f}%), usando chunks más pequeños (512KB)", flush=True)
+                            else:
+                                max_limit = 1024 * 1024  # 1MB máximo
+                            
                             # El limit debe ser el mínimo entre:
                             # 1. El chunk_size solicitado
-                            # 2. El tamaño restante del archivo
-                            # 3. El máximo permitido (1MB para evitar problemas con Telegram)
-                            max_limit = 1024 * 1024  # 1MB máximo
+                            # 2. El tamaño restante del archivo (CRÍTICO: nunca exceder)
+                            # 3. El máximo permitido según la posición
                             requested_limit = min(chunk_size, remaining_size, max_limit)
                             
                             # Asegurar que sea al menos 1024 bytes
                             requested_limit = max(1024, requested_limit)
                             
-                            # Calcular limit válido (múltiplo de 1024)
-                            valid_limit = get_valid_limit(requested_limit)
+                            # CRÍTICO: Si el remaining_size es menor que el requested_limit,
+                            # usar exactamente el remaining_size (redondeado a múltiplo de 1024)
+                            if remaining_size < requested_limit:
+                                requested_limit = remaining_size
                             
-                            # Validación final: asegurar que no exceda el tamaño restante
+                            # Redondear hacia abajo al múltiplo de 1024 más cercano
+                            # Esto asegura que nunca excedamos el remaining_size
+                            valid_limit = ((int(requested_limit) // 1024)) * 1024
+                            
+                            # Asegurar que sea al menos 1024 bytes
+                            if valid_limit < 1024:
+                                valid_limit = 1024
+                            
+                            # CRÍTICO: Verificación final - nunca exceder remaining_size
                             if valid_limit > remaining_size:
-                                # Redondear hacia abajo al múltiplo de 1024 más cercano que no exceda remaining_size
                                 valid_limit = ((remaining_size // 1024)) * 1024
-                                if valid_limit < 1024:
+                                if valid_limit < 1024 and remaining_size > 0:
                                     valid_limit = 1024
+                                elif valid_limit < 1024:
+                                    valid_limit = remaining_size  # Usar el tamaño exacto si es menor que 1024
                             
-                            # Validación final del limit antes de enviar
-                            if valid_limit % 1024 != 0:
-                                print(f"⚠️ ERROR: valid_limit no es múltiplo de 1024: {valid_limit}, corrigiendo...")
+                            # Verificación final: asegurar que sea múltiplo de 1024 (o el tamaño exacto si es menor)
+                            if valid_limit >= 1024 and valid_limit % 1024 != 0:
+                                print(f"⚠️ ERROR: valid_limit no es múltiplo de 1024: {valid_limit}, corrigiendo...", flush=True)
                                 valid_limit = ((valid_limit // 1024)) * 1024
                                 if valid_limit < 1024:
                                     valid_limit = 1024
                             
                             if valid_limit < 1024:
-                                print(f"⚠️ ERROR: valid_limit es menor que 1024: {valid_limit}, usando 1024")
-                                valid_limit = 1024
+                                print(f"⚠️ ERROR: valid_limit es menor que 1024: {valid_limit}, usando mínimo", flush=True)
+                                valid_limit = max(1024, remaining_size) if remaining_size >= 1024 else remaining_size
                             
-                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}), file_id={document.id}, limit%1024={valid_limit % 1024}", flush=True)
+                            # Verificación final absoluta: nunca exceder remaining_size
+                            if valid_limit > remaining_size:
+                                print(f"⚠️ CRÍTICO: valid_limit ({valid_limit}) excede remaining_size ({remaining_size}), ajustando...", flush=True)
+                                valid_limit = remaining_size
+                                # Redondear hacia abajo si es mayor que 1024
+                                if valid_limit >= 1024:
+                                    valid_limit = ((valid_limit // 1024)) * 1024
+                            
+                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024 if valid_limit >= 1024 else 'N/A'}", flush=True)
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,

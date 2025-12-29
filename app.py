@@ -1413,34 +1413,165 @@ def upload_video():
     upload_progress[upload_id]['status'] = 'saving'
     upload_progress[upload_id]['message'] = 'Guardando archivo en servidor...'
     
-    print(f"💾 Iniciando guardado de archivo: {local_path}")
-    print(f"📦 Tamaño del archivo recibido: {file.content_length if hasattr(file, 'content_length') else 'desconocido'} bytes")
+    # Obtener tamaño del archivo si está disponible
+    file_size_from_request = None
+    if hasattr(file, 'content_length') and file.content_length:
+        file_size_from_request = file.content_length
+    elif hasattr(file, 'content_length') and file.content_length == 0:
+        # Intentar obtener el tamaño desde el stream
+        try:
+            file.seek(0, 2)  # Ir al final
+            file_size_from_request = file.tell()
+            file.seek(0)  # Volver al inicio
+        except:
+            pass
     
-    try:
-        # Guardar archivo (esto puede tardar varios minutos para archivos de 4GB)
-        file.save(local_path)
-        file_size = os.path.getsize(local_path)
-        upload_progress[upload_id]['total'] = file_size
-        upload_progress[upload_id]['status'] = 'uploading'
-        upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
-        print(f"✅ Archivo guardado temporalmente: {local_path} ({file_size} bytes)")
-        print(f"📋 Upload IDs disponibles después de guardar archivo: {list(upload_progress.keys())}")
-    except Exception as e:
-        error_msg = f"Error guardando archivo: {str(e)}"
-        print(f"❌ {error_msg}")
-        upload_progress[upload_id]['status'] = 'error'
-        upload_progress[upload_id]['error'] = error_msg
+    print(f"💾 Iniciando guardado de archivo: {local_path}")
+    print(f"📦 Tamaño del archivo recibido: {file_size_from_request if file_size_from_request else 'desconocido'} bytes")
+    
+    # Guardar archivo en un thread separado para no bloquear la respuesta
+    # IMPORTANTE: Flask ya tiene el archivo en memoria/buffer, así que podemos leerlo
+    def save_file_async(file_obj, save_path, upload_id_param, estimated_size):
+        try:
+            import shutil
+            chunk_size = 1024 * 1024  # 1MB chunks
+            total_saved = 0
+            
+            # Si conocemos el tamaño, actualizarlo
+            if estimated_size and estimated_size > 0:
+                upload_progress[upload_id_param]['total'] = estimated_size
+                print(f"📊 Tamaño estimado del archivo: {estimated_size} bytes ({estimated_size / (1024*1024*1024):.2f} GB)")
+            
+            # Resetear el stream del archivo al inicio
+            file_obj.seek(0)
+            
+            with open(save_path, 'wb') as f:
+                while True:
+                    chunk = file_obj.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    total_saved += len(chunk)
+                    
+                    # Actualizar progreso del guardado (0-50% es guardado, 50-100% es subida)
+                    if estimated_size and estimated_size > 0:
+                        save_progress = int((total_saved / estimated_size) * 50)  # Máximo 50% para guardado
+                        upload_progress[upload_id_param]['progress'] = save_progress
+                        upload_progress[upload_id_param]['current'] = total_saved
+                        
+                        # Loggear cada 5% del guardado
+                        if save_progress % 5 == 0:
+                            mb_saved = total_saved / (1024 * 1024)
+                            mb_total = estimated_size / (1024 * 1024) if estimated_size else 0
+                            print(f"💾 Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)")
+                    else:
+                        # Si no conocemos el tamaño, mostrar MB guardados
+                        mb_saved = total_saved / (1024 * 1024)
+                        upload_progress[upload_id_param]['current'] = total_saved
+                        upload_progress[upload_id_param]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
+                        if int(mb_saved) % 100 == 0:  # Loggear cada 100MB
+                            print(f"💾 Guardando: {mb_saved:.1f}MB guardados...")
+            
+            file_size = os.path.getsize(save_path)
+            upload_progress[upload_id_param]['total'] = file_size
+            upload_progress[upload_id_param]['status'] = 'uploading'
+            upload_progress[upload_id_param]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
+            upload_progress[upload_id_param]['progress'] = 50  # 50% = guardado completo
+            print(f"✅ Archivo guardado temporalmente: {save_path} ({file_size} bytes, {file_size / (1024*1024*1024):.2f} GB)")
+            print(f"📋 Upload IDs disponibles después de guardar archivo: {list(upload_progress.keys())}")
+            
+            return file_size
+        except Exception as e:
+            import traceback
+            error_traceback = traceback.format_exc()
+            error_msg = f"Error guardando archivo: {str(e)}"
+            print(f"❌ {error_msg}")
+            print(f"❌ Traceback:\n{error_traceback}")
+            if upload_id_param in upload_progress:
+                upload_progress[upload_id_param]['status'] = 'error'
+                upload_progress[upload_id_param]['error'] = error_msg
+            return None
+    
+    # Iniciar guardado en thread separado
+    save_thread = threading.Thread(
+        target=lambda: save_file_async(file, local_path, upload_id, file_size_from_request),
+        daemon=True
+    )
+    save_thread.start()
+    
+    # Esperar un momento para que el thread inicie
+    time.sleep(0.1)
+    
+    # Verificar si hubo un error inmediato
+    if upload_progress[upload_id].get('status') == 'error':
+        error_msg = upload_progress[upload_id].get('error', 'Error desconocido')
         return jsonify({'error': error_msg}), 500
+    
+    # Estimar el tamaño del archivo para el progreso inicial
+    if file_size_from_request:
+        upload_progress[upload_id]['total'] = file_size_from_request
+    else:
+        # Si no conocemos el tamaño, usar un estimado grande
+        upload_progress[upload_id]['total'] = 4 * 1024 * 1024 * 1024  # 4GB estimado
     
     # Devolver upload_id INMEDIATAMENTE para que el frontend pueda monitorear
     # La subida se ejecutará en segundo plano
     def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
+            # ESPERAR a que el archivo se guarde completamente antes de iniciar la subida
+            max_wait_time = 600  # Máximo 10 minutos esperando
+            wait_interval = 2  # Verificar cada 2 segundos
+            waited = 0
+            
+            print(f"⏳ Esperando a que el archivo se guarde completamente: {local_path_param}")
+            while waited < max_wait_time:
+                # Verificar si el archivo existe y el estado cambió de 'saving' a 'uploading'
+                if os.path.exists(local_path_param):
+                    # Verificar el tamaño del archivo
+                    current_size = os.path.getsize(local_path_param)
+                    if upload_id_param in upload_progress:
+                        status = upload_progress[upload_id_param].get('status', 'unknown')
+                        total = upload_progress[upload_id_param].get('total', 0)
+                        
+                        # Si el estado es 'uploading' y el archivo tiene tamaño, está listo
+                        if status == 'uploading' and current_size > 0:
+                            # Verificar que el tamaño sea consistente
+                            if total > 0 and abs(current_size - total) < 1024:  # Permitir diferencia de 1KB
+                                print(f"✅ Archivo guardado completamente: {current_size} bytes")
+                                break
+                            elif total == 0:
+                                # Actualizar el total si no estaba configurado
+                                upload_progress[upload_id_param]['total'] = current_size
+                                file_size_param = current_size
+                                print(f"✅ Archivo guardado completamente: {current_size} bytes (total actualizado)")
+                                break
+                
+                time.sleep(wait_interval)
+                waited += wait_interval
+                
+                # Actualizar mensaje de espera
+                if upload_id_param in upload_progress:
+                    upload_progress[upload_id_param]['message'] = f'Guardando archivo... ({waited}s)'
+            
+            if waited >= max_wait_time:
+                raise Exception("Timeout esperando a que el archivo se guarde")
+            
+            # Verificar que el archivo existe antes de continuar
+            if not os.path.exists(local_path_param):
+                raise Exception(f"El archivo no existe después de guardar: {local_path_param}")
+            
+            # Obtener el tamaño real del archivo
+            actual_file_size = os.path.getsize(local_path_param)
+            if file_size_param == 0 or file_size_param != actual_file_size:
+                file_size_param = actual_file_size
+                if upload_id_param in upload_progress:
+                    upload_progress[upload_id_param]['total'] = actual_file_size
+            
             # Asegurarse de que el upload_id existe ANTES de comenzar la subida
             if upload_id_param not in upload_progress:
                 print(f"⚠️ Upload ID {upload_id_param} no encontrado al iniciar background, inicializando...")
                 upload_progress[upload_id_param] = {
-                    'progress': 0, 
+                    'progress': 50,  # 50% porque ya se guardó
                     'status': 'uploading', 
                     'current': 0, 
                     'total': file_size_param
@@ -1449,6 +1580,8 @@ def upload_video():
                 # Asegurarse de que el total esté configurado
                 upload_progress[upload_id_param]['total'] = file_size_param
                 upload_progress[upload_id_param]['status'] = 'uploading'
+                upload_progress[upload_id_param]['progress'] = 50  # 50% = guardado completo
+                upload_progress[upload_id_param]['message'] = 'Subiendo a Telegram...'
             
             print(f"🚀 Iniciando subida en background - Upload ID: {upload_id_param}")
             print(f"📋 Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}")
@@ -1476,28 +1609,34 @@ def upload_video():
             print(f"✅ Usando cliente principal para subida en background")
             
             # Callback para el progreso
+            # El progreso de Telegram (0-100%) se mapea a 50-100% del progreso total
+            # porque el guardado (0-50%) ya se completó
             def progress_callback(current, total):
                 if total > 0:
-                    progress = int((current / total) * 100)
+                    # Progreso de Telegram (0-100%)
+                    telegram_progress = (current / total) * 100
+                    # Mapear a progreso total: 50% (guardado) + 50% * progreso_telegram
+                    total_progress = 50 + int(telegram_progress * 0.5)
+                    
                     # Asegurarse de que el upload_id existe en el diccionario
                     if upload_id_param not in upload_progress:
                         print(f"⚠️ Upload ID {upload_id_param} no encontrado en callback, inicializando...")
                         upload_progress[upload_id_param] = {
-                            'progress': 0, 
+                            'progress': 50,  # Ya se guardó
                             'status': 'uploading', 
-                            'current': 0, 
+                            'current': current, 
                             'total': total
                         }
                     
                     # Actualizar progreso de forma thread-safe
-                    upload_progress[upload_id_param]['progress'] = progress
+                    upload_progress[upload_id_param]['progress'] = total_progress
                     upload_progress[upload_id_param]['current'] = current
                     upload_progress[upload_id_param]['total'] = total
                     upload_progress[upload_id_param]['status'] = 'uploading'
                     
                     # Loggear cada 5% para no saturar
-                    if progress % 5 == 0 or progress == 100:
-                        print(f"📤 Progreso: {progress}% ({current}/{total} bytes) - Upload ID: {upload_id_param}")
+                    if total_progress % 5 == 0 or total_progress == 100:
+                        print(f"📤 Progreso total: {total_progress}% (Telegram: {telegram_progress:.1f}%, {current}/{total} bytes) - Upload ID: {upload_id_param}")
                         print(f"📋 Upload IDs disponibles en callback: {list(upload_progress.keys())}")
             
             # Subir video al chat especificado desde el archivo local

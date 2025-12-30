@@ -1626,8 +1626,21 @@ def upload_video():
                 except Exception as cleanup_e:
                     print(f"⚠️ [STREAMING ERROR] Error eliminando archivo: {cleanup_e}", flush=True)
     
-    # CRÍTICO: Devolver respuesta INMEDIATAMENTE antes de procesar el archivo
-    # Esto permite que el frontend reciba la respuesta mientras Flask aún está recibiendo el request
+    # CRÍTICO: Copiar el contenido del archivo a un buffer ANTES de devolver la respuesta
+    # Flask cierra el stream del archivo cuando la función termina, así que necesitamos
+    # tener una copia del contenido antes de devolver la respuesta
+    from io import BytesIO
+    import shutil
+    
+    print(f"💾 [UPLOAD] Copiando archivo a buffer en memoria...", flush=True)
+    file.seek(0)  # Asegurarse de que estamos al inicio
+    file_buffer = BytesIO()
+    shutil.copyfileobj(file.stream, file_buffer)
+    file_buffer.seek(0)  # Resetear el buffer para que el thread pueda leerlo desde el inicio
+    file_size_bytes = file_buffer.getbuffer().nbytes
+    print(f"✅ [UPLOAD] Archivo copiado a buffer: {file_size_bytes} bytes ({file_size_bytes / (1024*1024):.2f} MB)", flush=True)
+    
+    # CRÍTICO: Devolver respuesta INMEDIATAMENTE después de copiar el archivo
     print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
     print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
     
@@ -1644,11 +1657,11 @@ def upload_video():
             upload_progress[upload_id]['message'] = 'Guardando archivo...'
             upload_progress[upload_id]['progress'] = 0
             
-            # file.save() es el método más eficiente de Flask
-            # Flask maneja internamente archivos grandes usando archivos temporales
-            print(f"💾 [BG] Guardando archivo usando file.save()...", flush=True)
-            file.seek(0)  # Asegurarse de que estamos al inicio
-            file.save(local_path)
+            # Guardar el archivo desde el buffer en memoria
+            print(f"💾 [BG] Guardando archivo desde buffer en memoria...", flush=True)
+            file_buffer.seek(0)  # Asegurarse de que estamos al inicio del buffer
+            with open(local_path, 'wb') as f:
+                shutil.copyfileobj(file_buffer, f)
             
             actual_file_size = os.path.getsize(local_path)
             print(f"✅ [BG] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)

@@ -1631,55 +1631,48 @@ def upload_video():
     upload_progress[upload_id]['message'] = 'Preparando archivo...'
     upload_progress[upload_id]['progress'] = 0
     
-    # SOLUCIÓN: Intentar usar el archivo temporal de Flask si está disponible
-    # Flask guarda archivos grandes en un archivo temporal automáticamente
-    file_temp_path = None
-    if hasattr(file, 'stream') and hasattr(file.stream, 'name'):
-        # Si el stream tiene un atributo 'name', es un archivo temporal
-        try:
-            file_temp_path = file.stream.name
-            if os.path.exists(file_temp_path):
-                print(f"✅ [UPLOAD] Flask ya guardó el archivo en temporal: {file_temp_path}", flush=True)
-                # Copiar el archivo temporal a nuestra ubicación en un thread
-                import threading as threading_module
-                import shutil
-                def copy_temp_file():
-                    try:
-                        shutil.copy2(file_temp_path, local_path)
-                        print(f"✅ [UPLOAD] Archivo copiado de temporal a: {local_path}", flush=True)
-                        # Iniciar streaming después de copiar
-                        save_and_upload_streaming(
-                            None, local_path, upload_id, file_size_from_request,
-                            phone, api_id, api_hash, session_name, chat_id, filename, description
-                        )
-                    except Exception as e:
-                        print(f"❌ [UPLOAD] Error copiando archivo temporal: {e}", flush=True)
-                        upload_progress[upload_id]['status'] = 'error'
-                        upload_progress[upload_id]['error'] = str(e)
-                
-                copy_thread = threading_module.Thread(target=copy_temp_file, daemon=True)
-                copy_thread.start()
-                print(f"🧵 [UPLOAD] Thread de copia iniciado, devolviendo respuesta inmediata", flush=True)
-            else:
-                file_temp_path = None
-        except:
-            file_temp_path = None
+    # SOLUCIÓN: Usar file.save() en un thread separado
+    # file.save() es el método más eficiente de Flask y maneja archivos grandes automáticamente
+    # Lo hacemos en un thread para no bloquear la respuesta HTTP
+    print(f"💾 [UPLOAD] Iniciando guardado usando file.save() en thread separado...", flush=True)
+    import threading as threading_module
     
-    # Si no hay archivo temporal, usar el método de streaming directo
-    if not file_temp_path:
-        print(f"📝 [UPLOAD] No hay archivo temporal, usando streaming directo del stream...", flush=True)
-        # Guardar directamente del stream a disco en un thread
-        # Flask mantiene el stream abierto mientras procesamos la request
-        import threading as threading_module
-        save_thread = threading_module.Thread(
-            target=lambda: save_and_upload_streaming(
-                file.stream, local_path, upload_id, file_size_from_request,
-                phone, api_id, api_hash, session_name, chat_id, filename, description
-            ),
-            daemon=True
-        )
-        save_thread.start()
-        print(f"🧵 [UPLOAD] Thread de streaming iniciado, devolviendo respuesta inmediata", flush=True)
+    def save_file_thread():
+        try:
+            # file.save() guarda el archivo de forma eficiente
+            # Flask maneja internamente archivos grandes usando archivos temporales
+            file.seek(0)  # Asegurarse de que estamos al inicio
+            file.save(local_path)
+            
+            actual_file_size = os.path.getsize(local_path)
+            print(f"✅ [UPLOAD] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+            
+            # Actualizar progreso
+            upload_progress[upload_id]['total'] = actual_file_size
+            upload_progress[upload_id]['status'] = 'saved'
+            upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
+            upload_progress[upload_id]['progress'] = 30
+            
+            # Iniciar subida a Telegram
+            upload_in_background(
+                phone, api_id, api_hash, session_name,
+                chat_id, local_path, filename, upload_id,
+                timestamp, actual_file_size, description
+            )
+        except Exception as e:
+            import traceback
+            error_traceback = traceback.format_exc()
+            error_msg = f"Error guardando archivo: {str(e)}"
+            print(f"❌ [UPLOAD] {error_msg}", flush=True)
+            print(f"❌ [UPLOAD] Traceback:\n{error_traceback}", flush=True)
+            if upload_id in upload_progress:
+                upload_progress[upload_id]['status'] = 'error'
+                upload_progress[upload_id]['error'] = error_msg
+    
+    # Iniciar thread de guardado
+    save_thread = threading_module.Thread(target=save_file_thread, daemon=True)
+    save_thread.start()
+    print(f"🧵 [UPLOAD] Thread de guardado iniciado, devolviendo respuesta inmediata", flush=True)
     
     print(f"📤 [UPLOAD] Preparando respuesta inmediata con upload_id: {upload_id}", flush=True)
     

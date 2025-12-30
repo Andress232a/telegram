@@ -1479,9 +1479,6 @@ def upload_video():
     def save_and_upload_streaming(file_obj, save_path, upload_id_param, estimated_size, phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, filename_param, description_param):
         try:
             import shutil
-            from io import BytesIO
-            import tempfile
-            
             chunk_size = 10 * 1024 * 1024  # 10MB chunks para mejor rendimiento
             total_saved = 0
             min_size_to_start_upload = 50 * 1024 * 1024  # Empezar a subir cuando tengamos 50MB guardados
@@ -1489,8 +1486,37 @@ def upload_video():
             print(f"🚀 [STREAMING] Iniciando guardado y subida simultánea para upload_id: {upload_id_param}", flush=True)
             print(f"💾 [STREAMING] Ruta destino: {save_path}", flush=True)
             
-            # Resetear el stream al inicio
-            file_obj.seek(0)
+            # Si file_obj es None, el archivo ya está guardado en save_path
+            if file_obj is None:
+                print(f"✅ [STREAMING] Archivo ya está guardado, verificando tamaño...", flush=True)
+                if os.path.exists(save_path):
+                    actual_file_size = os.path.getsize(save_path)
+                    upload_progress[upload_id_param]['total'] = actual_file_size
+                    upload_progress[upload_id_param]['status'] = 'uploading'
+                    upload_progress[upload_id_param]['message'] = 'Subiendo a Telegram...'
+                    upload_progress[upload_id_param]['progress'] = 30
+                    
+                    # Iniciar subida directamente
+                    import threading as threading_module
+                    upload_thread = threading_module.Thread(
+                        target=lambda: upload_in_background(
+                            phone_param, api_id_param, api_hash_param, session_name_param,
+                            chat_id_param, save_path, filename_param, upload_id_param,
+                            int(time.time()), actual_file_size, description_param
+                        ),
+                        daemon=True
+                    )
+                    upload_thread.start()
+                    upload_thread.join(timeout=3600)  # Esperar máximo 1 hora
+                    return
+                else:
+                    raise Exception("El archivo no existe en la ruta especificada")
+            
+            # Resetear el stream al inicio si es posible
+            try:
+                file_obj.seek(0)
+            except:
+                pass  # Algunos streams no soportan seek
             
             # Guardar en archivo temporal mientras leemos
             with open(save_path, 'wb') as f:
@@ -1498,9 +1524,18 @@ def upload_video():
                 upload_thread = None
                 
                 while True:
-                    chunk = file_obj.read(chunk_size)
-                    if not chunk:
-                        break
+                    try:
+                        chunk = file_obj.read(chunk_size)
+                        if not chunk:
+                            break
+                    except Exception as read_error:
+                        print(f"❌ [STREAMING] Error leyendo del stream: {read_error}", flush=True)
+                        # Si el stream está cerrado, intentar continuar con lo que ya tenemos
+                        if total_saved > 0:
+                            print(f"⚠️ [STREAMING] Stream cerrado, pero ya tenemos {total_saved} bytes guardados", flush=True)
+                            break
+                        else:
+                            raise
                     
                     f.write(chunk)
                     total_saved += len(chunk)
@@ -1596,29 +1631,55 @@ def upload_video():
     upload_progress[upload_id]['message'] = 'Preparando archivo...'
     upload_progress[upload_id]['progress'] = 0
     
-    # CRÍTICO: Copiar el contenido del archivo a un buffer en memoria ANTES de devolver la respuesta
-    # Flask cierra el stream del archivo después de que la función de la ruta termina
-    from io import BytesIO
-    file_content_buffer = BytesIO()
-    file.seek(0)  # Asegurarse de que el stream esté al inicio
-    import shutil
-    shutil.copyfileobj(file.stream, file_content_buffer)
-    file_content_buffer.seek(0)  # Resetear el buffer para que el thread pueda leerlo desde el inicio
+    # SOLUCIÓN: Intentar usar el archivo temporal de Flask si está disponible
+    # Flask guarda archivos grandes en un archivo temporal automáticamente
+    file_temp_path = None
+    if hasattr(file, 'stream') and hasattr(file.stream, 'name'):
+        # Si el stream tiene un atributo 'name', es un archivo temporal
+        try:
+            file_temp_path = file.stream.name
+            if os.path.exists(file_temp_path):
+                print(f"✅ [UPLOAD] Flask ya guardó el archivo en temporal: {file_temp_path}", flush=True)
+                # Copiar el archivo temporal a nuestra ubicación en un thread
+                import threading as threading_module
+                import shutil
+                def copy_temp_file():
+                    try:
+                        shutil.copy2(file_temp_path, local_path)
+                        print(f"✅ [UPLOAD] Archivo copiado de temporal a: {local_path}", flush=True)
+                        # Iniciar streaming después de copiar
+                        save_and_upload_streaming(
+                            None, local_path, upload_id, file_size_from_request,
+                            phone, api_id, api_hash, session_name, chat_id, filename, description
+                        )
+                    except Exception as e:
+                        print(f"❌ [UPLOAD] Error copiando archivo temporal: {e}", flush=True)
+                        upload_progress[upload_id]['status'] = 'error'
+                        upload_progress[upload_id]['error'] = str(e)
+                
+                copy_thread = threading_module.Thread(target=copy_temp_file, daemon=True)
+                copy_thread.start()
+                print(f"🧵 [UPLOAD] Thread de copia iniciado, devolviendo respuesta inmediata", flush=True)
+            else:
+                file_temp_path = None
+        except:
+            file_temp_path = None
     
-    print(f"✅ [UPLOAD] Contenido del archivo copiado a buffer en memoria. Tamaño: {file_content_buffer.getbuffer().nbytes} bytes", flush=True)
-    
-    # Iniciar guardado y subida simultánea en thread separado ANTES de devolver la respuesta
-    print(f"🧵 [UPLOAD] Iniciando thread de streaming (guardado + subida simultánea)...", flush=True)
-    import threading as threading_module
-    save_thread = threading_module.Thread(
-        target=lambda: save_and_upload_streaming(
-            file_content_buffer, local_path, upload_id, file_size_from_request,
-            phone, api_id, api_hash, session_name, chat_id, filename, description
-        ),
-        daemon=True
-    )
-    save_thread.start()
-    print(f"🧵 [UPLOAD] Thread de streaming iniciado, devolviendo respuesta inmediata", flush=True)
+    # Si no hay archivo temporal, usar el método de streaming directo
+    if not file_temp_path:
+        print(f"📝 [UPLOAD] No hay archivo temporal, usando streaming directo del stream...", flush=True)
+        # Guardar directamente del stream a disco en un thread
+        # Flask mantiene el stream abierto mientras procesamos la request
+        import threading as threading_module
+        save_thread = threading_module.Thread(
+            target=lambda: save_and_upload_streaming(
+                file.stream, local_path, upload_id, file_size_from_request,
+                phone, api_id, api_hash, session_name, chat_id, filename, description
+            ),
+            daemon=True
+        )
+        save_thread.start()
+        print(f"🧵 [UPLOAD] Thread de streaming iniciado, devolviendo respuesta inmediata", flush=True)
     
     print(f"📤 [UPLOAD] Preparando respuesta inmediata con upload_id: {upload_id}", flush=True)
     

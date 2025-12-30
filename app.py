@@ -1582,7 +1582,8 @@ def upload_video():
                         break
                     elif status == 'error':
                         error_msg = upload_progress[upload_id_param].get('error', 'Error desconocido')
-                        raise Exception(f"Error durante el guardado: {error_msg")
+                        error_msg = upload_progress[upload_id_param].get('error', 'Error desconocido')
+                        raise Exception(f"Error durante el guardado: {error_msg}")
                 
                 # Verificar si el archivo existe y tiene tamaño
                 if os.path.exists(local_path_param):

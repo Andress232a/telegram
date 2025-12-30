@@ -1626,26 +1626,32 @@ def upload_video():
                 except Exception as cleanup_e:
                     print(f"⚠️ [STREAMING ERROR] Error eliminando archivo: {cleanup_e}", flush=True)
     
-    # Inicializar estado
-    upload_progress[upload_id]['status'] = 'saving'
-    upload_progress[upload_id]['message'] = 'Preparando archivo...'
-    upload_progress[upload_id]['progress'] = 0
+    # CRÍTICO: Devolver respuesta INMEDIATAMENTE antes de procesar el archivo
+    # Esto permite que el frontend reciba la respuesta mientras Flask aún está recibiendo el request
+    print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
+    print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
     
-    # SOLUCIÓN: Usar file.save() en un thread separado
-    # file.save() es el método más eficiente de Flask y maneja archivos grandes automáticamente
-    # Lo hacemos en un thread para no bloquear la respuesta HTTP
-    print(f"💾 [UPLOAD] Iniciando guardado usando file.save() en thread separado...", flush=True)
+    # IMPORTANTE: Iniciar procesamiento en background DESPUÉS de devolver la respuesta
+    # Usamos un thread daemon para que no bloquee la aplicación
     import threading as threading_module
     
-    def save_file_thread():
+    def process_upload_background():
         try:
-            # file.save() guarda el archivo de forma eficiente
+            print(f"🚀 [BG] Iniciando procesamiento en background para upload_id: {upload_id}", flush=True)
+            
+            # Actualizar estado
+            upload_progress[upload_id]['status'] = 'saving'
+            upload_progress[upload_id]['message'] = 'Guardando archivo...'
+            upload_progress[upload_id]['progress'] = 0
+            
+            # file.save() es el método más eficiente de Flask
             # Flask maneja internamente archivos grandes usando archivos temporales
+            print(f"💾 [BG] Guardando archivo usando file.save()...", flush=True)
             file.seek(0)  # Asegurarse de que estamos al inicio
             file.save(local_path)
             
             actual_file_size = os.path.getsize(local_path)
-            print(f"✅ [UPLOAD] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+            print(f"✅ [BG] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
             
             # Actualizar progreso
             upload_progress[upload_id]['total'] = actual_file_size
@@ -1653,7 +1659,8 @@ def upload_video():
             upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
             upload_progress[upload_id]['progress'] = 30
             
-            # Iniciar subida a Telegram
+            # Iniciar subida a Telegram inmediatamente
+            print(f"📤 [BG] Iniciando subida a Telegram...", flush=True)
             upload_in_background(
                 phone, api_id, api_hash, session_name,
                 chat_id, local_path, filename, upload_id,
@@ -1662,21 +1669,31 @@ def upload_video():
         except Exception as e:
             import traceback
             error_traceback = traceback.format_exc()
-            error_msg = f"Error guardando archivo: {str(e)}"
-            print(f"❌ [UPLOAD] {error_msg}", flush=True)
-            print(f"❌ [UPLOAD] Traceback:\n{error_traceback}", flush=True)
+            error_msg = f"Error procesando upload: {str(e)}"
+            print(f"❌ [BG] {error_msg}", flush=True)
+            print(f"❌ [BG] Traceback:\n{error_traceback}", flush=True)
             if upload_id in upload_progress:
                 upload_progress[upload_id]['status'] = 'error'
                 upload_progress[upload_id]['error'] = error_msg
     
-    # Iniciar thread de guardado
-    save_thread = threading_module.Thread(target=save_file_thread, daemon=True)
-    save_thread.start()
-    print(f"🧵 [UPLOAD] Thread de guardado iniciado, devolviendo respuesta inmediata", flush=True)
+    # Iniciar thread de procesamiento en background
+    process_thread = threading_module.Thread(target=process_upload_background, daemon=True)
+    process_thread.start()
+    print(f"🧵 [UPLOAD] Thread de procesamiento iniciado", flush=True)
     
-    print(f"📤 [UPLOAD] Preparando respuesta inmediata con upload_id: {upload_id}", flush=True)
+    # CRÍTICO: Devolver respuesta INMEDIATAMENTE después de iniciar el thread
+    # Esto permite que el frontend reciba la respuesta mientras Flask aún está recibiendo el request
+    print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATAMENTE con upload_id: {upload_id}", flush=True)
+    print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
+    print("=" * 80, flush=True)
     
-    # Definir función de subida en background ANTES de devolver respuesta
+    return jsonify({
+        'message': 'Subida iniciada',
+        'upload_id': upload_id,
+        'status': 'saving'
+    })
+    
+    # Definir función de subida en background (esta función se define pero no se ejecuta aquí)
     def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
             # STREAMING: Esperar solo a que el archivo tenga un tamaño mínimo antes de empezar
@@ -1927,24 +1944,6 @@ def upload_video():
                 print(f"⚠️ Upload ID {upload_id} aún en progreso ({status}), no limpiando", flush=True)
     threading_module.Thread(target=cleanup_progress, daemon=True).start()
     
-    # Devolver upload_id INMEDIATAMENTE (ANTES de que Flask termine de leer el archivo)
-    print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATAMENTE con upload_id: {upload_id}", flush=True)
-    print(f"📋 [UPLOAD] Upload IDs disponibles antes de devolver: {list(upload_progress.keys())}", flush=True)
-    
-    # Asegurarse de que el upload_id esté en el diccionario antes de devolver
-    if upload_id not in upload_progress:
-        print(f"⚠️ [UPLOAD] ADVERTENCIA: upload_id {upload_id} no está en upload_progress, agregándolo...", flush=True)
-        upload_progress[upload_id] = {'progress': 0, 'status': 'saving', 'current': 0, 'total': file_size_from_request or 0}
-    
-    # Verificar una vez más antes de devolver
-    print(f"✅ [UPLOAD] Verificación final - upload_id en diccionario: {upload_id in upload_progress}", flush=True)
-    print("=" * 80, flush=True)
-    
-    return jsonify({
-        'message': 'Subida iniciada',
-        'upload_id': upload_id,
-        'status': 'saving'
-    })
 
 @app.route('/api/upload/progress/<upload_id>', methods=['GET'])
 def get_upload_progress(upload_id):

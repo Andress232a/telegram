@@ -1089,9 +1089,10 @@ def get_chats():
         return jsonify({'error': str(e)}), 500
 
 def get_or_create_client(phone):
-    """Obtener o crear un cliente de Telegram para el teléfono dado
-    Asegura que el event loop esté correctamente configurado para evitar errores de "no current event loop"
-    """Obtener o crear cliente de forma segura, evitando bloqueos de base de datos"""
+    """Obtener o crear un cliente de Telegram para el teléfono dado.
+    Asegura que el event loop esté correctamente configurado para evitar errores de "no current event loop".
+    Obtener o crear cliente de forma segura, evitando bloqueos de base de datos.
+    """
     if phone in telegram_clients:
         client_data = telegram_clients[phone]
         client = client_data.get('client')

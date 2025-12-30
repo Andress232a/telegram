@@ -366,6 +366,16 @@ def run_async(coro, loop=None, timeout=None):
                 del _thread_loops[thread_id]
         loop = get_event_loop()
     
+    # CRÍTICO: Establecer el loop como el loop actual del thread
+    # Esto previene el error "no current event loop"
+    try:
+        current_loop = asyncio.get_event_loop()
+        if current_loop.is_closed():
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        # No hay loop actual, establecer este
+        asyncio.set_event_loop(loop)
+    
     try:
         # Verificar si el loop ya está corriendo
         if loop.is_running():
@@ -388,7 +398,11 @@ def run_async(coro, loop=None, timeout=None):
         raise
     finally:
         # NO cerrar el loop - mantenerlo vivo para Telethon
-        pass
+        # Asegurarse de que el loop sigue siendo el loop actual
+        try:
+            asyncio.set_event_loop(loop)
+        except:
+            pass
 
 def load_saved_config():
     """Cargar configuración guardada"""
@@ -1075,6 +1089,8 @@ def get_chats():
         return jsonify({'error': str(e)}), 500
 
 def get_or_create_client(phone):
+    """Obtener o crear un cliente de Telegram para el teléfono dado
+    Asegura que el event loop esté correctamente configurado para evitar errores de "no current event loop"
     """Obtener o crear cliente de forma segura, evitando bloqueos de base de datos"""
     if phone in telegram_clients:
         client_data = telegram_clients[phone]
@@ -1378,6 +1394,9 @@ def send_message():
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
     """Subir video a Telegram: guarda temporalmente en local, sube a la nube, y borra local"""
+    # Asegurarse de que threading está disponible en el scope local
+    import threading as threading_module
+    
     print("=" * 80, flush=True)
     print("🚀 [UPLOAD] Endpoint /api/upload llamado", flush=True)
     print(f"📋 Método: {request.method}", flush=True)
@@ -1527,7 +1546,7 @@ def upload_video():
     
     # Iniciar guardado en thread separado ANTES de devolver respuesta
     print(f"🧵 [UPLOAD] Iniciando thread de guardado...", flush=True)
-    save_thread = threading.Thread(
+    save_thread = threading_module.Thread(
         target=lambda: save_file_async(file, local_path, upload_id, file_size_from_request),
         daemon=True
     )
@@ -1759,7 +1778,7 @@ def upload_video():
     
     # Ejecutar subida en segundo plano (pasar valores como parámetros, no usar sesión)
     print(f"🧵 [UPLOAD] Iniciando thread de subida a Telegram...", flush=True)
-    upload_thread = threading.Thread(
+    upload_thread = threading_module.Thread(
         target=upload_in_background, 
         args=(phone, api_id, api_hash, session_name, chat_id, local_path, filename, upload_id, timestamp, file_size_from_request or 0, description),
         daemon=True
@@ -1778,7 +1797,7 @@ def upload_video():
                 del upload_progress[upload_id]
             else:
                 print(f"⚠️ Upload ID {upload_id} aún en progreso ({status}), no limpiando", flush=True)
-    threading.Thread(target=cleanup_progress, daemon=True).start()
+    threading_module.Thread(target=cleanup_progress, daemon=True).start()
     
     # Devolver upload_id INMEDIATAMENTE (ANTES de que Flask termine de leer el archivo)
     print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATAMENTE con upload_id: {upload_id}", flush=True)

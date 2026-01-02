@@ -335,10 +335,19 @@ def get_event_loop():
             if loop.is_closed():
                 del _thread_loops[thread_id]
             else:
-                return loop
+                # CRÍTICO: Asegurarse de que el loop esté establecido como el loop actual del thread
+                # Esto es necesario porque Flask puede reutilizar threads y el loop puede no estar configurado
+                try:
+                    asyncio.set_event_loop(loop)
+                except RuntimeError:
+                    # Si hay un error, crear un nuevo loop
+                    pass
+                else:
+                    return loop
         
         # Crear nuevo loop para este thread
         loop = asyncio.new_event_loop()
+        # CRÍTICO: Establecer el loop como el loop actual del thread ANTES de guardarlo
         asyncio.set_event_loop(loop)
         _thread_loops[thread_id] = loop
         return loop
@@ -366,11 +375,12 @@ def run_async(coro, loop=None, timeout=None):
                 del _thread_loops[thread_id]
         loop = get_event_loop()
     
-    # CRÍTICO: Establecer el loop como el loop actual del thread
-    # Esto previene el error "no current event loop"
+    # CRÍTICO: Establecer el loop como el loop actual del thread SIEMPRE
+    # Esto previene el error "no current event loop" cuando Flask reutiliza threads
     try:
         current_loop = asyncio.get_event_loop()
-        if current_loop.is_closed():
+        # Si el loop actual es diferente o está cerrado, establecer el nuevo loop
+        if current_loop != loop or current_loop.is_closed():
             asyncio.set_event_loop(loop)
     except RuntimeError:
         # No hay loop actual, establecer este
@@ -1102,25 +1112,34 @@ def get_or_create_client(phone):
         if client:
             # PRIMERO verificar que el loop no esté cerrado
             if loop and not loop.is_closed():
-                # El loop es válido, verificar conexión (is_connected es síncrono)
+                # CRÍTICO: Asegurarse de que el loop esté establecido como el loop actual del thread
+                # Esto previene el error "no current event loop" cuando Flask reutiliza threads
                 try:
-                    # is_connected() es un método síncrono, no una corrutina
-                    if client.is_connected():
-                        # Cliente válido y conectado, retornarlo
-                        return client
-                    else:
-                        print(f"⚠️ Cliente existe pero no está conectado, intentando reconectar...")
-                        # Intentar reconectar
-                        try:
-                            run_async(client.connect(), loop, timeout=10)
-                            # Verificar nuevamente (síncrono)
-                            if client.is_connected():
-                                return client
-                        except Exception as e:
-                            print(f"⚠️ Error reconectando cliente: {e}")
-                            # Si falla la reconexión, crear uno nuevo
-                            del telegram_clients[phone]
-                except Exception as e:
+                    asyncio.set_event_loop(loop)
+                except RuntimeError:
+                    # Si hay un error, el loop puede estar en mal estado, crear uno nuevo
+                    del telegram_clients[phone]
+                    loop = None
+                else:
+                    # El loop es válido, verificar conexión (is_connected es síncrono)
+                    try:
+                        # is_connected() es un método síncrono, no una corrutina
+                        if client.is_connected():
+                            # Cliente válido y conectado, retornarlo
+                            return client
+                        else:
+                            print(f"⚠️ Cliente existe pero no está conectado, intentando reconectar...")
+                            # Intentar reconectar
+                            try:
+                                run_async(client.connect(), loop, timeout=10)
+                                # Verificar nuevamente (síncrono)
+                                if client.is_connected():
+                                    return client
+                            except Exception as e:
+                                print(f"⚠️ Error reconectando cliente: {e}")
+                                # Si falla la reconexión, crear uno nuevo
+                                del telegram_clients[phone]
+                    except Exception as e:
                     print(f"⚠️ Error verificando conexión del cliente: {e}")
                     # Si hay error, el cliente puede estar en mal estado, crear uno nuevo
                     try:

@@ -1140,18 +1140,18 @@ def get_or_create_client(phone):
                                 # Si falla la reconexión, crear uno nuevo
                                 del telegram_clients[phone]
                     except Exception as e:
-                    print(f"⚠️ Error verificando conexión del cliente: {e}")
-                    # Si hay error, el cliente puede estar en mal estado, crear uno nuevo
-                    try:
-                        # Intentar desconectar de forma segura
-                        if hasattr(client, 'is_connected') and client.is_connected():
-                            try:
-                                run_async(client.disconnect(), loop, timeout=5)
-                            except:
-                                pass
-                    except:
-                        pass
-                    del telegram_clients[phone]
+                        print(f"⚠️ Error verificando conexión del cliente: {e}")
+                        # Si hay error, el cliente puede estar en mal estado, crear uno nuevo
+                        try:
+                            # Intentar desconectar de forma segura
+                            if hasattr(client, 'is_connected') and client.is_connected():
+                                try:
+                                    run_async(client.disconnect(), loop, timeout=5)
+                                except:
+                                    pass
+                        except:
+                            pass
+                        del telegram_clients[phone]
             else:
                 print(f"⚠️ Loop del cliente cerrado, necesitamos crear un nuevo cliente...")
                 # El loop está cerrado, NO podemos usar el cliente

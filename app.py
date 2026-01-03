@@ -1493,6 +1493,230 @@ def upload_video():
         # Si no conocemos el tamaño, usar un estimado grande
         upload_progress[upload_id]['total'] = 4 * 1024 * 1024 * 1024  # 4GB estimado
     
+    # CRÍTICO: Definir upload_in_background ANTES de usarla
+    def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
+        try:
+            # STREAMING: Esperar solo a que el archivo tenga un tamaño mínimo antes de empezar
+            # No esperamos a que esté completamente guardado
+            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo tenga tamaño suficiente: {local_path_param}", flush=True)
+            
+            min_size_to_start = 50 * 1024 * 1024  # 50MB mínimo para empezar
+            max_wait_time = 300  # 5 minutos máximo esperando el tamaño mínimo
+            wait_interval = 1  # Verificar cada segundo
+            waited = 0
+            
+            # Esperar a que el archivo exista y tenga tamaño mínimo
+            while waited < max_wait_time:
+                if os.path.exists(local_path_param):
+                    current_size = os.path.getsize(local_path_param)
+                    if current_size >= min_size_to_start:
+                        print(f"✅ [UPLOAD-BG] Archivo tiene tamaño suficiente ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                        break
+                    elif current_size > 0:
+                        # Si tiene algo pero no suficiente, esperar un poco más
+                        if upload_id_param in upload_progress:
+                            upload_progress[upload_id_param]['message'] = f'Preparando archivo... ({current_size / (1024*1024):.1f}MB)'
+                
+                # Verificar errores
+                if upload_id_param in upload_progress:
+                    status = upload_progress[upload_id_param].get('status', 'unknown')
+                    if status == 'error':
+                        error_msg = upload_progress[upload_id_param].get('error', 'Error desconocido')
+                        raise Exception(f"Error durante el guardado: {error_msg}")
+                
+                time.sleep(wait_interval)
+                waited += wait_interval
+            
+            if waited >= max_wait_time:
+                # Si no alcanzó el tamaño mínimo, intentar de todas formas si existe
+                if os.path.exists(local_path_param):
+                    current_size = os.path.getsize(local_path_param)
+                    if current_size > 0:
+                        print(f"⚠️ [UPLOAD-BG] Timeout esperando tamaño mínimo, pero archivo existe ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                    else:
+                        raise Exception("El archivo existe pero está vacío")
+                else:
+                    raise Exception("Timeout esperando a que el archivo exista (5 minutos)")
+            
+            # Verificar que el archivo existe
+            if not os.path.exists(local_path_param):
+                raise Exception(f"El archivo no existe: {local_path_param}")
+            
+            # Obtener el tamaño actual del archivo (puede seguir creciendo)
+            actual_file_size = os.path.getsize(local_path_param)
+            if file_size_param == 0:
+                file_size_param = actual_file_size
+            if upload_id_param in upload_progress:
+                upload_progress[upload_id_param]['total'] = file_size_param
+                print(f"✅ [UPLOAD-BG] Iniciando subida: archivo tiene {actual_file_size} bytes ({actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+            
+            # Asegurarse de que el upload_id existe ANTES de comenzar la subida
+            if upload_id_param not in upload_progress:
+                print(f"⚠️ [UPLOAD-BG] Upload ID {upload_id_param} no encontrado al iniciar background, inicializando...", flush=True)
+                upload_progress[upload_id_param] = {
+                    'progress': 30,  # 30% porque ya se guardó el mínimo
+                    'status': 'uploading', 
+                    'current': 0, 
+                    'total': file_size_param
+                }
+            else:
+                # Asegurarse de que el total esté configurado
+                upload_progress[upload_id_param]['total'] = file_size_param
+                upload_progress[upload_id_param]['status'] = 'uploading'
+                upload_progress[upload_id_param]['progress'] = 30  # 30% = guardado inicial completo
+                upload_progress[upload_id_param]['message'] = 'Subiendo a Telegram...'
+            
+            print(f"🚀 [UPLOAD-BG] Iniciando subida en background - Upload ID: {upload_id_param}", flush=True)
+            print(f"📋 [UPLOAD-BG] Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}", flush=True)
+            
+            # IMPORTANTE: NO crear un cliente nuevo con la misma sesión SQLite porque causa "database is locked"
+            # En su lugar, usar el cliente principal pero ejecutar la subida de forma asíncrona
+            # Obtener el cliente principal del diccionario
+            if phone_param not in telegram_clients:
+                raise Exception("Cliente no encontrado en telegram_clients")
+            
+            client_data = telegram_clients[phone_param]
+            client = client_data.get('client')
+            client_loop = client_data.get('loop')
+            
+            if not client or not client_loop:
+                raise Exception("Cliente o loop no disponible")
+            
+            # Verificar que el cliente esté conectado
+            if not client.is_connected():
+                print(f"⚠️ Cliente no conectado, intentando conectar...")
+                run_async(client.connect(), client_loop, timeout=10)
+                if not client.is_connected():
+                    raise Exception("No se pudo conectar el cliente")
+            
+            print(f"✅ Usando cliente principal para subida en background")
+            
+            # Callback para el progreso
+            # El progreso de Telegram (0-100%) se mapea a 30-100% del progreso total
+            # porque el guardado inicial (0-30%) ya se completó
+            def progress_callback(current, total):
+                if total > 0:
+                    # Progreso de Telegram (0-100%)
+                    telegram_progress = (current / total) * 100
+                    # Mapear a progreso total: 30% (guardado inicial) + 70% * progreso_telegram
+                    total_progress = 30 + int(telegram_progress * 0.7)
+                    
+                    # Asegurarse de que el upload_id existe en el diccionario
+                    if upload_id_param not in upload_progress:
+                        print(f"⚠️ Upload ID {upload_id_param} no encontrado en callback, inicializando...", flush=True)
+                        upload_progress[upload_id_param] = {
+                            'progress': 30,  # Guardado inicial
+                            'status': 'uploading', 
+                            'current': current, 
+                            'total': total
+                        }
+                    
+                    # Actualizar progreso de forma thread-safe
+                    upload_progress[upload_id_param]['progress'] = total_progress
+                    upload_progress[upload_id_param]['current'] = current
+                    upload_progress[upload_id_param]['total'] = total
+                    upload_progress[upload_id_param]['status'] = 'uploading'
+                    upload_progress[upload_id_param]['message'] = f'Subiendo a Telegram... {total_progress}%'
+                    
+                    # Loggear cada 5% para no saturar
+                    if total_progress % 5 == 0 or total_progress == 100:
+                        print(f"📤 [UPLOAD-BG] Progreso total: {total_progress}% (Telegram: {telegram_progress:.1f}%, {current}/{total} bytes) - Upload ID: {upload_id_param}", flush=True)
+            
+            # Subir video al chat especificado desde el archivo local
+            async def upload():
+                # Usar la descripción si está disponible, sino usar el nombre del archivo
+                caption = description_param if description_param else filename_param
+                
+                # Enviar el archivo desde el path local
+                message = await client.send_file(
+                    int(chat_id_param) if chat_id_param != 'me' else 'me', 
+                    local_path_param, 
+                    caption=caption,
+                    progress_callback=progress_callback
+                )
+                return message
+            
+            # Ejecutar usando el loop del cliente con timeout largo para videos grandes
+            # Calcular timeout basado en el tamaño del archivo (6 segundos por MB, mínimo 10 minutos)
+            file_size_mb = file_size_param / (1024 * 1024)
+            timeout_seconds = max(600, int(file_size_mb * 6))  # Mínimo 10 minutos, 6 segundos por MB
+            print(f"⏱️ Timeout configurado: {timeout_seconds} segundos para archivo de {file_size_mb:.2f} MB")
+            
+            message = run_async(upload(), client_loop, timeout=timeout_seconds)
+            
+            # Marcar como completado
+            upload_progress[upload_id_param]['status'] = 'completed'
+            upload_progress[upload_id_param]['progress'] = 100
+            
+            # ✅ CONFIRMADO: Video subido a la nube de Telegram
+            # Ahora borrar el archivo local inmediatamente
+            try:
+                if os.path.exists(local_path_param):
+                    os.remove(local_path_param)
+                    print(f"🗑️ Archivo local eliminado: {local_path_param}")
+                else:
+                    print(f"⚠️ Archivo no existe (ya fue eliminado): {local_path_param}")
+            except Exception as e:
+                print(f"⚠️ Error eliminando archivo local: {e}")
+                import traceback
+                print(traceback.format_exc())
+                # Intentar de nuevo después de un segundo
+                try:
+                    time.sleep(1)
+                    if os.path.exists(local_path_param):
+                        os.remove(local_path_param)
+                        print(f"🗑️ Archivo local eliminado en segundo intento: {local_path_param}")
+                except Exception as e2:
+                    print(f"❌ Error crítico eliminando archivo: {e2}")
+            
+            # Generar URL alternativa para ver el video
+            video_id = secrets.token_urlsafe(16)
+            # Asegurarse de que chat_id sea string para consistencia
+            chat_id_str = str(chat_id_param) if chat_id_param != 'me' else 'me'
+            
+            if save_video_to_db(video_id, chat_id_str, message.id, filename_param, timestamp_param, file_size_param):
+                print(f"✅ Video subido a Telegram: ID={video_id}, Chat={chat_id_str}, Message={message.id}")
+            else:
+                print(f"⚠️ Error guardando video en DB, pero continuando...")
+            
+            # Guardar video_id en el progreso para que el frontend lo pueda obtener
+            upload_progress[upload_id_param]['video_id'] = video_id
+            upload_progress[upload_id_param]['message_id'] = message.id
+            upload_progress[upload_id_param]['chat_id'] = chat_id_str
+            
+        except Exception as e:
+            # Marcar como error con información detallada
+            import traceback
+            error_traceback = traceback.format_exc()
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            
+            print(f"❌ ERROR en subida en background - Upload ID: {upload_id_param}")
+            print(f"❌ Error: {error_msg}")
+            print(f"❌ Traceback completo:\n{error_traceback}")
+            
+            if upload_id_param in upload_progress:
+                upload_progress[upload_id_param]['status'] = 'error'
+                upload_progress[upload_id_param]['error'] = error_msg
+                upload_progress[upload_id_param]['error_details'] = error_traceback
+            
+            # Limpiar archivo local en caso de error
+            try:
+                if os.path.exists(local_path_param):
+                    os.remove(local_path_param)
+                    print(f"🗑️ Archivo local eliminado después de error: {local_path_param}")
+                else:
+                    print(f"⚠️ Archivo no existe para eliminar: {local_path_param}")
+            except Exception as e:
+                print(f"⚠️ Error eliminando archivo después de error: {e}")
+                # Intentar de nuevo
+                try:
+                    time.sleep(1)
+                    if os.path.exists(local_path_param):
+                        os.remove(local_path_param)
+                        print(f"🗑️ Archivo local eliminado en segundo intento: {local_path_param}")
+                except:
+                    pass
+    
     # SOLUCIÓN STREAMING: Guardar y subir simultáneamente
     # Leemos el archivo en chunks y lo guardamos, pero empezamos a subir tan pronto como tengamos suficiente data
     def save_and_upload_streaming(file_obj, save_path, upload_id_param, estimated_size, phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, filename_param, description_param):
@@ -1724,257 +1948,6 @@ def upload_video():
         'upload_id': upload_id,
         'status': 'saving'
     })
-    
-    # Definir función de subida en background (esta función se define pero no se ejecuta aquí)
-    def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
-        try:
-            # STREAMING: Esperar solo a que el archivo tenga un tamaño mínimo antes de empezar
-            # No esperamos a que esté completamente guardado
-            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo tenga tamaño suficiente: {local_path_param}", flush=True)
-            
-            min_size_to_start = 50 * 1024 * 1024  # 50MB mínimo para empezar
-            max_wait_time = 300  # 5 minutos máximo esperando el tamaño mínimo
-            wait_interval = 1  # Verificar cada segundo
-            waited = 0
-            
-            # Esperar a que el archivo exista y tenga tamaño mínimo
-            while waited < max_wait_time:
-                if os.path.exists(local_path_param):
-                    current_size = os.path.getsize(local_path_param)
-                    if current_size >= min_size_to_start:
-                        print(f"✅ [UPLOAD-BG] Archivo tiene tamaño suficiente ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
-                        break
-                    elif current_size > 0:
-                        # Si tiene algo pero no suficiente, esperar un poco más
-                        if upload_id_param in upload_progress:
-                            upload_progress[upload_id_param]['message'] = f'Preparando archivo... ({current_size / (1024*1024):.1f}MB)'
-                
-                # Verificar errores
-                if upload_id_param in upload_progress:
-                    status = upload_progress[upload_id_param].get('status', 'unknown')
-                    if status == 'error':
-                        error_msg = upload_progress[upload_id_param].get('error', 'Error desconocido')
-                        raise Exception(f"Error durante el guardado: {error_msg}")
-                
-                time.sleep(wait_interval)
-                waited += wait_interval
-            
-            if waited >= max_wait_time:
-                # Si no alcanzó el tamaño mínimo, intentar de todas formas si existe
-                if os.path.exists(local_path_param):
-                    current_size = os.path.getsize(local_path_param)
-                    if current_size > 0:
-                        print(f"⚠️ [UPLOAD-BG] Timeout esperando tamaño mínimo, pero archivo existe ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
-                    else:
-                        raise Exception("El archivo existe pero está vacío")
-                else:
-                    raise Exception("Timeout esperando a que el archivo exista (5 minutos)")
-            
-            # Verificar que el archivo existe
-            if not os.path.exists(local_path_param):
-                raise Exception(f"El archivo no existe: {local_path_param}")
-            
-            # Obtener el tamaño actual del archivo (puede seguir creciendo)
-            actual_file_size = os.path.getsize(local_path_param)
-            if file_size_param == 0:
-                file_size_param = actual_file_size
-            if upload_id_param in upload_progress:
-                upload_progress[upload_id_param]['total'] = file_size_param
-                print(f"✅ [UPLOAD-BG] Iniciando subida: archivo tiene {actual_file_size} bytes ({actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
-            
-            # Asegurarse de que el upload_id existe ANTES de comenzar la subida
-            if upload_id_param not in upload_progress:
-                print(f"⚠️ [UPLOAD-BG] Upload ID {upload_id_param} no encontrado al iniciar background, inicializando...", flush=True)
-                upload_progress[upload_id_param] = {
-                    'progress': 30,  # 30% porque ya se guardó el mínimo
-                    'status': 'uploading', 
-                    'current': 0, 
-                    'total': file_size_param
-                }
-            else:
-                # Asegurarse de que el total esté configurado
-                upload_progress[upload_id_param]['total'] = file_size_param
-                upload_progress[upload_id_param]['status'] = 'uploading'
-                upload_progress[upload_id_param]['progress'] = 30  # 30% = guardado inicial completo
-                upload_progress[upload_id_param]['message'] = 'Subiendo a Telegram...'
-            
-            print(f"🚀 [UPLOAD-BG] Iniciando subida en background - Upload ID: {upload_id_param}", flush=True)
-            print(f"📋 [UPLOAD-BG] Upload IDs disponibles al iniciar background: {list(upload_progress.keys())}", flush=True)
-            
-            # IMPORTANTE: NO crear un cliente nuevo con la misma sesión SQLite porque causa "database is locked"
-            # En su lugar, usar el cliente principal pero ejecutar la subida de forma asíncrona
-            # Obtener el cliente principal del diccionario
-            if phone_param not in telegram_clients:
-                raise Exception("Cliente no encontrado en telegram_clients")
-            
-            client_data = telegram_clients[phone_param]
-            client = client_data.get('client')
-            client_loop = client_data.get('loop')
-            
-            if not client or not client_loop:
-                raise Exception("Cliente o loop no disponible")
-            
-            # Verificar que el cliente esté conectado
-            if not client.is_connected():
-                print(f"⚠️ Cliente no conectado, intentando conectar...")
-                run_async(client.connect(), client_loop, timeout=10)
-                if not client.is_connected():
-                    raise Exception("No se pudo conectar el cliente")
-            
-            print(f"✅ Usando cliente principal para subida en background")
-            
-            # Callback para el progreso
-            # El progreso de Telegram (0-100%) se mapea a 30-100% del progreso total
-            # porque el guardado inicial (0-30%) ya se completó
-            def progress_callback(current, total):
-                if total > 0:
-                    # Progreso de Telegram (0-100%)
-                    telegram_progress = (current / total) * 100
-                    # Mapear a progreso total: 30% (guardado inicial) + 70% * progreso_telegram
-                    total_progress = 30 + int(telegram_progress * 0.7)
-                    
-                    # Asegurarse de que el upload_id existe en el diccionario
-                    if upload_id_param not in upload_progress:
-                        print(f"⚠️ Upload ID {upload_id_param} no encontrado en callback, inicializando...", flush=True)
-                        upload_progress[upload_id_param] = {
-                            'progress': 30,  # Guardado inicial
-                            'status': 'uploading', 
-                            'current': current, 
-                            'total': total
-                        }
-                    
-                    # Actualizar progreso de forma thread-safe
-                    upload_progress[upload_id_param]['progress'] = total_progress
-                    upload_progress[upload_id_param]['current'] = current
-                    upload_progress[upload_id_param]['total'] = total
-                    upload_progress[upload_id_param]['status'] = 'uploading'
-                    upload_progress[upload_id_param]['message'] = f'Subiendo a Telegram... {total_progress}%'
-                    
-                    # Loggear cada 5% para no saturar
-                    if total_progress % 5 == 0 or total_progress == 100:
-                        print(f"📤 [UPLOAD-BG] Progreso total: {total_progress}% (Telegram: {telegram_progress:.1f}%, {current}/{total} bytes) - Upload ID: {upload_id_param}", flush=True)
-            
-            # Subir video al chat especificado desde el archivo local
-            async def upload():
-                # Usar la descripción si está disponible, sino usar el nombre del archivo
-                caption = description_param if description_param else filename_param
-                
-                # Enviar el archivo desde el path local
-                message = await client.send_file(
-                    int(chat_id_param) if chat_id_param != 'me' else 'me', 
-                    local_path_param, 
-                    caption=caption,
-                    progress_callback=progress_callback
-                )
-                return message
-            
-            # Ejecutar usando el loop del cliente con timeout largo para videos grandes
-            # Calcular timeout basado en el tamaño del archivo (6 segundos por MB, mínimo 10 minutos)
-            file_size_mb = file_size_param / (1024 * 1024)
-            timeout_seconds = max(600, int(file_size_mb * 6))  # Mínimo 10 minutos, 6 segundos por MB
-            print(f"⏱️ Timeout configurado: {timeout_seconds} segundos para archivo de {file_size_mb:.2f} MB")
-            
-            message = run_async(upload(), client_loop, timeout=timeout_seconds)
-            
-            # Marcar como completado
-            upload_progress[upload_id_param]['status'] = 'completed'
-            upload_progress[upload_id_param]['progress'] = 100
-            
-            # ✅ CONFIRMADO: Video subido a la nube de Telegram
-            # Ahora borrar el archivo local inmediatamente
-            try:
-                if os.path.exists(local_path_param):
-                    os.remove(local_path_param)
-                    print(f"🗑️ Archivo local eliminado: {local_path_param}")
-                else:
-                    print(f"⚠️ Archivo no existe (ya fue eliminado): {local_path_param}")
-            except Exception as e:
-                print(f"⚠️ Error eliminando archivo local: {e}")
-                import traceback
-                print(traceback.format_exc())
-                # Intentar de nuevo después de un segundo
-                try:
-                    time.sleep(1)
-                    if os.path.exists(local_path_param):
-                        os.remove(local_path_param)
-                        print(f"🗑️ Archivo local eliminado en segundo intento: {local_path_param}")
-                except Exception as e2:
-                    print(f"❌ Error crítico eliminando archivo: {e2}")
-            
-            # Generar URL alternativa para ver el video
-            video_id = secrets.token_urlsafe(16)
-            # Asegurarse de que chat_id sea string para consistencia
-            chat_id_str = str(chat_id_param) if chat_id_param != 'me' else 'me'
-            
-            if save_video_to_db(video_id, chat_id_str, message.id, filename_param, timestamp_param, file_size_param):
-                print(f"✅ Video subido a Telegram: ID={video_id}, Chat={chat_id_str}, Message={message.id}")
-            else:
-                print(f"⚠️ Error guardando video en DB, pero continuando...")
-            
-            # Guardar video_id en el progreso para que el frontend lo pueda obtener
-            upload_progress[upload_id_param]['video_id'] = video_id
-            upload_progress[upload_id_param]['message_id'] = message.id
-            upload_progress[upload_id_param]['chat_id'] = chat_id_str
-            
-        except Exception as e:
-            # Marcar como error con información detallada
-            import traceback
-            error_traceback = traceback.format_exc()
-            error_msg = f"{type(e).__name__}: {str(e)}"
-            
-            print(f"❌ ERROR en subida en background - Upload ID: {upload_id_param}")
-            print(f"❌ Error: {error_msg}")
-            print(f"❌ Traceback completo:\n{error_traceback}")
-            
-            if upload_id_param in upload_progress:
-                upload_progress[upload_id_param]['status'] = 'error'
-                upload_progress[upload_id_param]['error'] = error_msg
-                upload_progress[upload_id_param]['error_details'] = error_traceback
-            
-            # Limpiar archivo local en caso de error
-            try:
-                if os.path.exists(local_path_param):
-                    os.remove(local_path_param)
-                    print(f"🗑️ Archivo local eliminado después de error: {local_path_param}")
-                else:
-                    print(f"⚠️ Archivo no existe para eliminar: {local_path_param}")
-            except Exception as e:
-                print(f"⚠️ Error eliminando archivo después de error: {e}")
-                # Intentar de nuevo
-                try:
-                    time.sleep(1)
-                    if os.path.exists(local_path_param):
-                        os.remove(local_path_param)
-                        print(f"🗑️ Archivo local eliminado en segundo intento: {local_path_param}")
-                except:
-                    pass
-            
-            import traceback
-            print(f"❌ Error subiendo video: {e}")
-            print(traceback.format_exc())
-    
-    # Ejecutar subida en segundo plano (pasar valores como parámetros, no usar sesión)
-    print(f"🧵 [UPLOAD] Iniciando thread de subida a Telegram...", flush=True)
-    upload_thread = threading_module.Thread(
-        target=upload_in_background, 
-        args=(phone, api_id, api_hash, session_name, chat_id, local_path, filename, upload_id, timestamp, file_size_from_request or 0, description),
-        daemon=True
-    )
-    upload_thread.start()
-    print(f"🧵 [UPLOAD] Thread de subida iniciado", flush=True)
-    
-    # Limpiar progreso después de un tiempo (solo si está completado o con error)
-    def cleanup_progress():
-        time.sleep(300)  # Esperar 5 minutos antes de limpiar
-        if upload_id in upload_progress:
-            status = upload_progress[upload_id].get('status', 'unknown')
-            # Solo limpiar si está completado o con error
-            if status in ['completed', 'error']:
-                print(f"🗑️ Limpiando upload_id completado: {upload_id}", flush=True)
-                del upload_progress[upload_id]
-            else:
-                print(f"⚠️ Upload ID {upload_id} aún en progreso ({status}), no limpiando", flush=True)
-    threading_module.Thread(target=cleanup_progress, daemon=True).start()
     
 
 @app.route('/api/upload/progress/<upload_id>', methods=['GET'])

@@ -1997,73 +1997,188 @@ def upload_video():
                 except Exception as cleanup_e:
                     print(f"⚠️ [STREAMING ERROR] Error eliminando archivo: {cleanup_e}", flush=True)
     
-    # CRÍTICO: Copiar el contenido del archivo a un buffer ANTES de devolver la respuesta
-    # Flask cierra el stream del archivo cuando la función termina, así que necesitamos
-    # tener una copia del contenido antes de devolver la respuesta
-    from io import BytesIO
-    import shutil
+    # ULTRA POTENTE: Para archivos grandes, usar streaming directo sin cargar en memoria
+    # Para archivos pequeños, podemos usar buffer en memoria
+    # Umbral: 100MB - archivos más grandes usan streaming directo
+    STREAMING_THRESHOLD = 100 * 1024 * 1024  # 100MB
     
-    print(f"💾 [UPLOAD] Copiando archivo a buffer en memoria...", flush=True)
-    file.seek(0)  # Asegurarse de que estamos al inicio
-    file_buffer = BytesIO()
-    shutil.copyfileobj(file.stream, file_buffer)
-    file_buffer.seek(0)  # Resetear el buffer para que el thread pueda leerlo desde el inicio
-    file_size_bytes = file_buffer.getbuffer().nbytes
-    print(f"✅ [UPLOAD] Archivo copiado a buffer: {file_size_bytes} bytes ({file_size_bytes / (1024*1024):.2f} MB)", flush=True)
-    
-    # CRÍTICO: Devolver respuesta INMEDIATAMENTE después de copiar el archivo
-    print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
-    print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
-    
-    # IMPORTANTE: Iniciar procesamiento en background DESPUÉS de devolver la respuesta
-    # Usamos un thread daemon para que no bloquee la aplicación
-    import threading as threading_module
-    
-    def process_upload_background():
+    # Obtener tamaño del archivo si está disponible
+    file_size_from_request = None
+    if hasattr(file, 'content_length') and file.content_length:
+        file_size_from_request = file.content_length
+    elif hasattr(file, 'content_length') and file.content_length == 0:
+        # Intentar obtener el tamaño desde el stream
         try:
-            print(f"🚀 [BG] Iniciando procesamiento en background para upload_id: {upload_id}", flush=True)
-            
-            # Actualizar estado
-            upload_progress[upload_id]['status'] = 'saving'
-            upload_progress[upload_id]['message'] = 'Guardando archivo...'
-            upload_progress[upload_id]['progress'] = 0
-            
-            # Guardar el archivo desde el buffer en memoria
-            print(f"💾 [BG] Guardando archivo desde buffer en memoria...", flush=True)
-            file_buffer.seek(0)  # Asegurarse de que estamos al inicio del buffer
-            with open(local_path, 'wb') as f:
-                shutil.copyfileobj(file_buffer, f)
-            
-            actual_file_size = os.path.getsize(local_path)
-            print(f"✅ [BG] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
-            
-            # Actualizar progreso
-            upload_progress[upload_id]['total'] = actual_file_size
-            upload_progress[upload_id]['status'] = 'saved'
-            upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
-            upload_progress[upload_id]['progress'] = 30
-            
-            # Iniciar subida a Telegram inmediatamente
-            print(f"📤 [BG] Iniciando subida a Telegram...", flush=True)
-            upload_in_background(
-                phone, api_id, api_hash, session_name,
-                chat_id, local_path, filename, upload_id,
-                timestamp, actual_file_size, description
-            )
-        except Exception as e:
-            import traceback
-            error_traceback = traceback.format_exc()
-            error_msg = f"Error procesando upload: {str(e)}"
-            print(f"❌ [BG] {error_msg}", flush=True)
-            print(f"❌ [BG] Traceback:\n{error_traceback}", flush=True)
-            if upload_id in upload_progress:
-                upload_progress[upload_id]['status'] = 'error'
-                upload_progress[upload_id]['error'] = error_msg
+            file.seek(0, 2)  # Ir al final
+            file_size_from_request = file.tell()
+            file.seek(0)  # Volver al inicio
+        except:
+            pass
     
-    # Iniciar thread de procesamiento en background
-    process_thread = threading_module.Thread(target=process_upload_background, daemon=True)
-    process_thread.start()
-    print(f"🧵 [UPLOAD] Thread de procesamiento iniciado", flush=True)
+    # Decidir estrategia basado en tamaño
+    use_streaming = file_size_from_request is None or file_size_from_request >= STREAMING_THRESHOLD
+    
+    if use_streaming:
+        # STREAMING ULTRA POTENTE: Para archivos grandes, usar file.save() que es optimizado
+        # Flask/Werkzeug maneja el streaming internamente de forma eficiente
+        print(f"🚀 [UPLOAD] Modo STREAMING ULTRA POTENTE activado para archivo grande", flush=True)
+        print(f"📦 [UPLOAD] Tamaño estimado: {file_size_from_request / (1024*1024*1024):.2f} GB" if file_size_from_request else "📦 [UPLOAD] Tamaño desconocido (streaming)", flush=True)
+        
+        # CRÍTICO: Devolver respuesta INMEDIATAMENTE para que el frontend no se quede esperando
+        print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
+        print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
+        
+        # Iniciar streaming en background inmediatamente
+        import threading as threading_module
+        
+        def process_streaming_background():
+            try:
+                print(f"🚀 [STREAM-BG] Iniciando streaming ultra potente para upload_id: {upload_id}", flush=True)
+                
+                # Actualizar estado
+                upload_progress[upload_id]['status'] = 'saving'
+                upload_progress[upload_id]['message'] = 'Guardando archivo...'
+                upload_progress[upload_id]['progress'] = 0
+                
+                # ULTRA POTENTE: Usar file.save() que maneja streaming eficientemente
+                # Flask/Werkzeug optimiza esto internamente para archivos grandes
+                # Para archivos grandes, Werkzeug usa un archivo temporal y lo mueve
+                print(f"💾 [STREAM-BG] Guardando archivo usando file.save() (streaming optimizado)...", flush=True)
+                file.seek(0)  # Asegurarse de que estamos al inicio
+                
+                # Monitorear progreso mientras se guarda
+                # Usar un thread separado para monitorear el tamaño del archivo
+                def monitor_progress():
+                    last_size = 0
+                    while upload_progress[upload_id].get('status') == 'saving':
+                        if os.path.exists(local_path):
+                            current_size = os.path.getsize(local_path)
+                            if current_size != last_size:
+                                if file_size_from_request and file_size_from_request > 0:
+                                    save_progress = min(30, int((current_size / file_size_from_request) * 30))
+                                    upload_progress[upload_id]['progress'] = save_progress
+                                    upload_progress[upload_id]['current'] = current_size
+                                    upload_progress[upload_id]['total'] = file_size_from_request
+                                    upload_progress[upload_id]['message'] = f'Guardando archivo... {save_progress}%'
+                                    
+                                    if save_progress % 5 == 0:
+                                        mb_saved = current_size / (1024 * 1024)
+                                        mb_total = file_size_from_request / (1024 * 1024)
+                                        print(f"💾 [STREAM-BG] Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
+                                else:
+                                    mb_saved = current_size / (1024 * 1024)
+                                    upload_progress[upload_id]['current'] = current_size
+                                    upload_progress[upload_id]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
+                                    if int(mb_saved) % 50 == 0:
+                                        print(f"💾 [STREAM-BG] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
+                                last_size = current_size
+                        time.sleep(0.5)  # Verificar cada medio segundo
+                
+                # Iniciar monitoreo de progreso
+                monitor_thread = threading_module.Thread(target=monitor_progress, daemon=True)
+                monitor_thread.start()
+                
+                # Guardar archivo - Flask maneja el streaming internamente
+                file.save(local_path)
+                
+                actual_file_size = os.path.getsize(local_path)
+                print(f"✅ [STREAM-BG] Archivo guardado completamente: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+                
+                # Actualizar progreso final
+                upload_progress[upload_id]['total'] = actual_file_size
+                upload_progress[upload_id]['status'] = 'saved'
+                upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
+                upload_progress[upload_id]['progress'] = 30
+                
+                # Iniciar subida a Telegram inmediatamente
+                print(f"📤 [STREAM-BG] Iniciando subida a Telegram...", flush=True)
+                upload_in_background(
+                    phone, api_id, api_hash, session_name,
+                    chat_id, local_path, filename, upload_id,
+                    timestamp, actual_file_size, description
+                )
+                
+            except Exception as e:
+                import traceback
+                error_traceback = traceback.format_exc()
+                error_msg = f"Error procesando streaming: {str(e)}"
+                print(f"❌ [STREAM-BG] {error_msg}", flush=True)
+                print(f"❌ [STREAM-BG] Traceback:\n{error_traceback}", flush=True)
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]['status'] = 'error'
+                    upload_progress[upload_id]['error'] = error_msg
+        
+        # Iniciar thread de streaming en background
+        process_thread = threading_module.Thread(target=process_streaming_background, daemon=True)
+        process_thread.start()
+        print(f"🧵 [UPLOAD] Thread de streaming ultra potente iniciado", flush=True)
+    
+    else:
+        # Para archivos pequeños, usar buffer en memoria (más rápido)
+        print(f"💾 [UPLOAD] Modo buffer en memoria para archivo pequeño", flush=True)
+        from io import BytesIO
+        import shutil
+        
+        print(f"💾 [UPLOAD] Copiando archivo a buffer en memoria...", flush=True)
+        file.seek(0)  # Asegurarse de que estamos al inicio
+        file_buffer = BytesIO()
+        shutil.copyfileobj(file.stream, file_buffer)
+        file_buffer.seek(0)  # Resetear el buffer para que el thread pueda leerlo desde el inicio
+        file_size_bytes = file_buffer.getbuffer().nbytes
+        print(f"✅ [UPLOAD] Archivo copiado a buffer: {file_size_bytes} bytes ({file_size_bytes / (1024*1024):.2f} MB)", flush=True)
+        
+        # CRÍTICO: Devolver respuesta INMEDIATAMENTE después de copiar el archivo
+        print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
+        print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
+        
+        # IMPORTANTE: Iniciar procesamiento en background DESPUÉS de devolver la respuesta
+        import threading as threading_module
+        
+        def process_upload_background():
+            try:
+                print(f"🚀 [BG] Iniciando procesamiento en background para upload_id: {upload_id}", flush=True)
+                
+                # Actualizar estado
+                upload_progress[upload_id]['status'] = 'saving'
+                upload_progress[upload_id]['message'] = 'Guardando archivo...'
+                upload_progress[upload_id]['progress'] = 0
+                
+                # Guardar el archivo desde el buffer en memoria
+                print(f"💾 [BG] Guardando archivo desde buffer en memoria...", flush=True)
+                file_buffer.seek(0)  # Asegurarse de que estamos al inicio del buffer
+                with open(local_path, 'wb') as f:
+                    shutil.copyfileobj(file_buffer, f)
+                
+                actual_file_size = os.path.getsize(local_path)
+                print(f"✅ [BG] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+                
+                # Actualizar progreso
+                upload_progress[upload_id]['total'] = actual_file_size
+                upload_progress[upload_id]['status'] = 'saved'
+                upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
+                upload_progress[upload_id]['progress'] = 30
+                
+                # Iniciar subida a Telegram inmediatamente
+                print(f"📤 [BG] Iniciando subida a Telegram...", flush=True)
+                upload_in_background(
+                    phone, api_id, api_hash, session_name,
+                    chat_id, local_path, filename, upload_id,
+                    timestamp, actual_file_size, description
+                )
+            except Exception as e:
+                import traceback
+                error_traceback = traceback.format_exc()
+                error_msg = f"Error procesando upload: {str(e)}"
+                print(f"❌ [BG] {error_msg}", flush=True)
+                print(f"❌ [BG] Traceback:\n{error_traceback}", flush=True)
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]['status'] = 'error'
+                    upload_progress[upload_id]['error'] = error_msg
+        
+        # Iniciar thread de procesamiento en background
+        process_thread = threading_module.Thread(target=process_upload_background, daemon=True)
+        process_thread.start()
+        print(f"🧵 [UPLOAD] Thread de procesamiento iniciado", flush=True)
     
     # CRÍTICO: Devolver respuesta INMEDIATAMENTE después de iniciar el thread
     # Esto permite que el frontend reciba la respuesta mientras Flask aún está recibiendo el request

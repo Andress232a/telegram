@@ -1591,26 +1591,50 @@ def upload_video():
     # CRÍTICO: Definir upload_in_background ANTES de usarla
     def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
-            # STREAMING: Esperar solo a que el archivo tenga un tamaño mínimo antes de empezar
-            # No esperamos a que esté completamente guardado
-            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo tenga tamaño suficiente: {local_path_param}", flush=True)
+            # STREAMING: Para archivos grandes (>50MB), empezar a subir cuando tengamos 50MB
+            # Para archivos pequeños, esperar a que esté completamente guardado
+            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo esté listo: {local_path_param}", flush=True)
             
-            min_size_to_start = 50 * 1024 * 1024  # 50MB mínimo para empezar
-            max_wait_time = 300  # 5 minutos máximo esperando el tamaño mínimo
-            wait_interval = 1  # Verificar cada segundo
+            min_size_to_start = 50 * 1024 * 1024  # 50MB mínimo para empezar streaming
+            max_wait_time = 300  # 5 minutos máximo esperando
+            wait_interval = 0.5  # Verificar cada medio segundo para respuesta más rápida
             waited = 0
+            last_size = 0
+            stable_count = 0  # Contador para detectar cuando el archivo deja de crecer
             
-            # Esperar a que el archivo exista y tenga tamaño mínimo
+            # Esperar a que el archivo exista y esté listo
             while waited < max_wait_time:
                 if os.path.exists(local_path_param):
                     current_size = os.path.getsize(local_path_param)
-                    if current_size >= min_size_to_start:
-                        print(f"✅ [UPLOAD-BG] Archivo tiene tamaño suficiente ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
-                        break
-                    elif current_size > 0:
-                        # Si tiene algo pero no suficiente, esperar un poco más
-                        if upload_id_param in upload_progress:
-                            upload_progress[upload_id_param]['message'] = f'Preparando archivo... ({current_size / (1024*1024):.1f}MB)'
+                    
+                    # Si el archivo es pequeño (<50MB), esperar a que esté completamente guardado
+                    # Detectamos esto cuando el tamaño deja de cambiar
+                    if file_size_param > 0 and file_size_param < min_size_to_start:
+                        # Archivo pequeño: esperar a que esté completamente guardado
+                        if current_size >= file_size_param:
+                            print(f"✅ [UPLOAD-BG] Archivo pequeño completamente guardado ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                            break
+                        elif current_size == last_size:
+                            stable_count += 1
+                            # Si el tamaño no cambia por 2 segundos, asumir que está completo
+                            if stable_count >= 4:  # 4 * 0.5s = 2 segundos
+                                print(f"✅ [UPLOAD-BG] Archivo pequeño parece estar completo ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                                break
+                        else:
+                            stable_count = 0
+                    else:
+                        # Archivo grande: empezar cuando tengamos 50MB
+                        if current_size >= min_size_to_start:
+                            print(f"✅ [UPLOAD-BG] Archivo grande tiene tamaño suficiente ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                            break
+                        elif current_size > 0:
+                            # Si tiene algo pero no suficiente, esperar un poco más
+                            if upload_id_param in upload_progress:
+                                upload_progress[upload_id_param]['message'] = f'Preparando archivo... ({current_size / (1024*1024):.1f}MB)'
+                    
+                    last_size = current_size
+                else:
+                    stable_count = 0
                 
                 # Verificar errores
                 if upload_id_param in upload_progress:
@@ -1627,7 +1651,7 @@ def upload_video():
                 if os.path.exists(local_path_param):
                     current_size = os.path.getsize(local_path_param)
                     if current_size > 0:
-                        print(f"⚠️ [UPLOAD-BG] Timeout esperando tamaño mínimo, pero archivo existe ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                        print(f"⚠️ [UPLOAD-BG] Timeout esperando, pero archivo existe ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
                     else:
                         raise Exception("El archivo existe pero está vacío")
                 else:
@@ -1735,9 +1759,18 @@ def upload_video():
             # Calcular timeout basado en el tamaño del archivo (6 segundos por MB, mínimo 10 minutos)
             file_size_mb = file_size_param / (1024 * 1024)
             timeout_seconds = max(600, int(file_size_mb * 6))  # Mínimo 10 minutos, 6 segundos por MB
-            print(f"⏱️ Timeout configurado: {timeout_seconds} segundos para archivo de {file_size_mb:.2f} MB")
+            print(f"⏱️ [UPLOAD-BG] Timeout configurado: {timeout_seconds} segundos para archivo de {file_size_mb:.2f} MB", flush=True)
+            print(f"🚀 [UPLOAD-BG] Iniciando subida a Telegram ahora...", flush=True)
             
-            message = run_async(upload(), client_loop, timeout=timeout_seconds)
+            try:
+                message = run_async(upload(), client_loop, timeout=timeout_seconds)
+                print(f"✅ [UPLOAD-BG] Subida completada exitosamente", flush=True)
+            except Exception as upload_error:
+                error_msg = str(upload_error)
+                print(f"❌ [UPLOAD-BG] Error durante la subida: {error_msg}", flush=True)
+                import traceback
+                print(f"❌ [UPLOAD-BG] Traceback:\n{traceback.format_exc()}", flush=True)
+                raise
             
             # Marcar como completado
             upload_progress[upload_id_param]['status'] = 'completed'

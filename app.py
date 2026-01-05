@@ -2019,116 +2019,94 @@ def upload_video():
     use_streaming = file_size_from_request is None or file_size_from_request >= STREAMING_THRESHOLD
     
     if use_streaming:
-        # STREAMING ULTRA POTENTE: Para archivos grandes, leer en chunks y guardar con progreso en tiempo real
+        # STREAMING ULTRA POTENTE: Para archivos grandes, leer en chunks ANTES de devolver respuesta
+        # Esto asegura que el stream esté disponible y el progreso se actualice desde el inicio
         print(f"🚀 [UPLOAD] Modo STREAMING ULTRA POTENTE activado para archivo grande", flush=True)
         print(f"📦 [UPLOAD] Tamaño estimado: {file_size_from_request / (1024*1024*1024):.2f} GB" if file_size_from_request else "📦 [UPLOAD] Tamaño desconocido (streaming)", flush=True)
         
-        # CRÍTICO: Leer el stream ANTES de devolver la respuesta para asegurar que esté disponible
-        # Pero hacerlo en un thread para no bloquear
-        import threading as threading_module
-        import queue
+        # CRÍTICO: Inicializar progreso ANTES de empezar a leer
+        upload_progress[upload_id]['status'] = 'saving'
+        upload_progress[upload_id]['message'] = 'Guardando archivo...'
+        upload_progress[upload_id]['progress'] = 0
         
-        # Cola para pasar el stream al thread de background
-        stream_queue = queue.Queue()
+        # ULTRA POTENTE: Leer el stream en chunks ANTES de devolver la respuesta
+        # Esto permite actualizar el progreso en tiempo real desde el inicio
+        print(f"💾 [UPLOAD] Leyendo archivo en chunks con progreso en tiempo real...", flush=True)
         
-        def process_streaming_background():
-            try:
-                print(f"🚀 [STREAM-BG] Iniciando streaming ultra potente para upload_id: {upload_id}", flush=True)
-                
-                # Actualizar estado
-                upload_progress[upload_id]['status'] = 'saving'
-                upload_progress[upload_id]['message'] = 'Guardando archivo...'
-                upload_progress[upload_id]['progress'] = 0
-                
-                # ULTRA POTENTE: Guardar en chunks para actualizar progreso en tiempo real
-                # Esto permite ver el progreso desde el inicio, incluso para archivos de 4GB+
-                print(f"💾 [STREAM-BG] Guardando archivo en chunks para progreso en tiempo real...", flush=True)
-                
-                # Obtener el stream del file object
-                file_stream = file.stream
-                file_stream.seek(0)  # Asegurarse de que estamos al inicio
-                
-                chunk_size = 10 * 1024 * 1024  # 10MB chunks para balance entre rendimiento y actualización de progreso
-                total_saved = 0
-                last_logged_progress = -1
-                
-                # Guardar en chunks para poder actualizar progreso en tiempo real
-                with open(local_path, 'wb') as f:
-                    while True:
-                        try:
-                            chunk = file_stream.read(chunk_size)
-                            if not chunk:
-                                break
-                            
-                            f.write(chunk)
-                            f.flush()  # Asegurar que se escriba al disco inmediatamente
-                            total_saved += len(chunk)
-                            
-                            # Actualizar progreso en tiempo real - CRÍTICO para archivos grandes
-                            if file_size_from_request and file_size_from_request > 0:
-                                save_progress = min(30, int((total_saved / file_size_from_request) * 30))
-                                upload_progress[upload_id]['progress'] = save_progress
-                                upload_progress[upload_id]['current'] = total_saved
-                                upload_progress[upload_id]['total'] = file_size_from_request
-                                upload_progress[upload_id]['status'] = 'saving'
-                                upload_progress[upload_id]['message'] = f'Guardando archivo... {save_progress}%'
-                                
-                                # Loggear cada 1% para archivos grandes (más frecuente)
-                                if save_progress != last_logged_progress and (save_progress % 1 == 0 or save_progress == 30):
-                                    mb_saved = total_saved / (1024 * 1024)
-                                    mb_total = file_size_from_request / (1024 * 1024)
-                                    print(f"💾 [STREAM-BG] Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
-                                    last_logged_progress = save_progress
-                            else:
-                                mb_saved = total_saved / (1024 * 1024)
-                                upload_progress[upload_id]['current'] = total_saved
-                                upload_progress[upload_id]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
-                                if int(mb_saved) % 50 == 0:
-                                    print(f"💾 [STREAM-BG] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
+        file.seek(0)  # Asegurarse de que estamos al inicio
+        file_stream = file.stream
+        chunk_size = 10 * 1024 * 1024  # 10MB chunks
+        total_read = 0
+        last_logged_progress = -1
+        
+        # Leer y guardar en chunks, actualizando progreso en tiempo real
+        with open(local_path, 'wb') as f:
+            while True:
+                try:
+                    chunk = file_stream.read(chunk_size)
+                    if not chunk:
+                        break
+                    
+                    f.write(chunk)
+                    f.flush()  # Asegurar escritura inmediata
+                    total_read += len(chunk)
+                    
+                    # Actualizar progreso en tiempo real - CRÍTICO para archivos grandes
+                    if file_size_from_request and file_size_from_request > 0:
+                        save_progress = min(30, int((total_read / file_size_from_request) * 30))
+                        upload_progress[upload_id]['progress'] = save_progress
+                        upload_progress[upload_id]['current'] = total_read
+                        upload_progress[upload_id]['total'] = file_size_from_request
+                        upload_progress[upload_id]['status'] = 'saving'
+                        upload_progress[upload_id]['message'] = f'Guardando archivo... {save_progress}%'
                         
-                        except Exception as read_error:
-                            print(f"❌ [STREAM-BG] Error leyendo del stream: {read_error}", flush=True)
-                            if total_saved > 0:
-                                print(f"⚠️ [STREAM-BG] Stream cerrado, pero ya tenemos {total_saved} bytes guardados", flush=True)
-                                break
-                            else:
-                                raise
+                        # Loggear cada 1% para archivos grandes
+                        if save_progress != last_logged_progress and (save_progress % 1 == 0 or save_progress == 30):
+                            mb_saved = total_read / (1024 * 1024)
+                            mb_total = file_size_from_request / (1024 * 1024)
+                            print(f"💾 [UPLOAD] Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
+                            last_logged_progress = save_progress
+                    else:
+                        mb_saved = total_read / (1024 * 1024)
+                        upload_progress[upload_id]['current'] = total_read
+                        upload_progress[upload_id]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
+                        if int(mb_saved) % 50 == 0:
+                            print(f"💾 [UPLOAD] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
                 
-                actual_file_size = os.path.getsize(local_path)
-                print(f"✅ [STREAM-BG] Archivo guardado completamente: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
-                
-                # Actualizar progreso final
-                upload_progress[upload_id]['total'] = actual_file_size
-                upload_progress[upload_id]['status'] = 'saved'
-                upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
-                upload_progress[upload_id]['progress'] = 30
-                
-                # Iniciar subida a Telegram inmediatamente
-                print(f"📤 [STREAM-BG] Iniciando subida a Telegram...", flush=True)
-                upload_in_background(
-                    phone, api_id, api_hash, session_name,
-                    chat_id, local_path, filename, upload_id,
-                    timestamp, actual_file_size, description
-                )
-                
-            except Exception as e:
-                import traceback
-                error_traceback = traceback.format_exc()
-                error_msg = f"Error procesando streaming: {str(e)}"
-                print(f"❌ [STREAM-BG] {error_msg}", flush=True)
-                print(f"❌ [STREAM-BG] Traceback:\n{error_traceback}", flush=True)
-                if upload_id in upload_progress:
-                    upload_progress[upload_id]['status'] = 'error'
-                    upload_progress[upload_id]['error'] = error_msg
+                except Exception as read_error:
+                    print(f"❌ [UPLOAD] Error leyendo del stream: {read_error}", flush=True)
+                    if total_read > 0:
+                        print(f"⚠️ [UPLOAD] Stream cerrado, pero ya tenemos {total_read} bytes guardados", flush=True)
+                        break
+                    else:
+                        raise
         
-        # CRÍTICO: Devolver respuesta INMEDIATAMENTE para que el frontend no se quede esperando
-        print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
+        actual_file_size = os.path.getsize(local_path)
+        print(f"✅ [UPLOAD] Archivo guardado completamente: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+        
+        # Actualizar progreso final del guardado
+        upload_progress[upload_id]['total'] = actual_file_size
+        upload_progress[upload_id]['status'] = 'saved'
+        upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
+        upload_progress[upload_id]['progress'] = 30
+        
+        # CRÍTICO: Devolver respuesta DESPUÉS de guardar el archivo
+        # Esto asegura que el stream esté completamente leído antes de que Flask lo cierre
+        print(f"📤 [UPLOAD] Devolviendo respuesta con upload_id: {upload_id}", flush=True)
         print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
         
-        # Iniciar thread de streaming en background
-        process_thread = threading_module.Thread(target=process_streaming_background, daemon=True)
-        process_thread.start()
-        print(f"🧵 [UPLOAD] Thread de streaming ultra potente iniciado", flush=True)
+        # Iniciar subida a Telegram en background
+        import threading as threading_module
+        upload_thread = threading_module.Thread(
+            target=lambda: upload_in_background(
+                phone, api_id, api_hash, session_name,
+                chat_id, local_path, filename, upload_id,
+                timestamp, actual_file_size, description
+            ),
+            daemon=True
+        )
+        upload_thread.start()
+        print(f"🧵 [UPLOAD] Thread de subida a Telegram iniciado", flush=True)
     
     else:
         # Para archivos pequeños, usar buffer en memoria (más rápido)

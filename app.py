@@ -120,6 +120,8 @@ cleanup_old_uploads()
 
 # Almacenar clientes de Telegram por sesión
 telegram_clients = {}
+# Lock para prevenir creación concurrente de clientes con la misma sesión SQLite
+_client_creation_lock = threading.Lock()
 upload_progress = {}  # Almacenar progreso de subidas
 video_memory_cache = {}  # Caché en memoria de videos (como Telegram - pre-cargados)
 CONFIG_FILE = 'telegram_config.json'  # Archivo para guardar configuración
@@ -513,13 +515,33 @@ def connect():
         return jsonify({'message': 'Código enviado', 'needs_code': True})
     
     try:
+        # CRÍTICO: Cerrar cualquier cliente existente para esta sesión antes de crear uno nuevo
+        # Esto previene el error "database is locked"
+        if phone in telegram_clients:
+            old_client_data = telegram_clients[phone]
+            old_client = old_client_data.get('client')
+            if old_client:
+                try:
+                    print("🔒 Cerrando cliente existente antes de crear uno nuevo...")
+                    old_loop = old_client_data.get('loop')
+                    if old_loop and not old_loop.is_closed():
+                        if old_client.is_connected():
+                            run_async(old_client.disconnect(), old_loop, timeout=5)
+                    del telegram_clients[phone]
+                    time.sleep(0.2)  # Esperar a que SQLite libere el lock
+                    print("✅ Cliente antiguo cerrado")
+                except Exception as e:
+                    print(f"⚠️ Error cerrando cliente antiguo: {e}")
+        
         # Asegurarse de que hay un event loop antes de crear el cliente
         print("🔄 Creando event loop...")
         loop = get_event_loop()
         
         # Crear cliente de Telegram (necesita un loop disponible)
+        # Usar lock para prevenir creación concurrente
         print("📱 Creando cliente de Telegram...")
-        client = TelegramClient(session_name, api_id, api_hash, loop=loop, timeout=10)
+        with _client_creation_lock:
+            client = TelegramClient(session_name, api_id, api_hash, loop=loop, timeout=10)
         
         # Conectar usando el event loop del thread actual
         print("🔌 Conectando a Telegram...")
@@ -629,10 +651,23 @@ def verify_code():
     else:
         # Asegurarse de que hay un event loop antes de crear el cliente
         loop = get_event_loop()
-        # Recrear cliente en este thread
-        client = TelegramClient(client_data['session_name'], client_data['api_id'], client_data['api_hash'], loop=loop)
-        client_data['loop'] = loop
-        print("🆕 Creando nuevo cliente...")
+        # Recrear cliente en este thread con lock para prevenir "database is locked"
+        with _client_creation_lock:
+            # Cerrar cliente antiguo si existe
+            if 'client' in client_data and client_data['client']:
+                try:
+                    old_client = client_data['client']
+                    if old_client.is_connected():
+                        old_loop = client_data.get('loop')
+                        if old_loop and not old_loop.is_closed():
+                            run_async(old_client.disconnect(), old_loop, timeout=5)
+                    time.sleep(0.1)  # Esperar a que SQLite libere el lock
+                except:
+                    pass
+            
+            client = TelegramClient(client_data['session_name'], client_data['api_id'], client_data['api_hash'], loop=loop)
+            client_data['loop'] = loop
+            print("🆕 Creando nuevo cliente...")
     
     try:
         # Asegurarse de que el cliente esté conectado
@@ -1165,36 +1200,96 @@ def get_or_create_client(phone):
                 del telegram_clients[phone]
     
     # Si no hay cliente o no está conectado, crear uno nuevo
+    # CRÍTICO: Usar lock para prevenir creación concurrente de clientes con la misma sesión SQLite
+    # Esto previene el error "database is locked"
     session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
     api_id = int(session['api_id'])
     api_hash = session['api_hash']
     
-    # Usar un loop dedicado para este cliente
-    loop = get_event_loop()
-    client = TelegramClient(session_name, api_id, api_hash, loop=loop)
-    
-    # Conectar si no está conectado
-    if not client.is_connected():
-        try:
-            run_async(client.connect(), loop, timeout=10)
-            if not client.is_connected():
-                print(f"⚠️ Cliente creado pero no conectado después de connect()")
-        except Exception as e:
-            print(f"❌ Error conectando cliente en get_or_create_client: {e}")
-            import traceback
-            print(traceback.format_exc())
-            raise
-    
-    # Guardar en telegram_clients
-    telegram_clients[phone] = {
-        'client': client,
-        'api_id': api_id,
-        'api_hash': api_hash,
-        'session_name': session_name,
-        'loop': loop
-    }
-    
-    return client
+    with _client_creation_lock:
+        # Verificar nuevamente dentro del lock (double-check pattern)
+        if phone in telegram_clients:
+            client_data = telegram_clients[phone]
+            client = client_data.get('client')
+            if client and client.is_connected():
+                return client
+        
+        # Cerrar cualquier cliente antiguo que pueda estar bloqueando la sesión
+        # Buscar otros clientes que usen la misma sesión
+        for other_phone, other_data in list(telegram_clients.items()):
+            if other_phone != phone and other_data.get('session_name') == session_name:
+                other_client = other_data.get('client')
+                if other_client:
+                    try:
+                        print(f"🔒 Cerrando cliente antiguo para {other_phone} que usa la misma sesión...")
+                        if other_client.is_connected():
+                            other_loop = other_data.get('loop')
+                            if other_loop and not other_loop.is_closed():
+                                try:
+                                    run_async(other_client.disconnect(), other_loop, timeout=5)
+                                except:
+                                    pass
+                        del telegram_clients[other_phone]
+                        print(f"✅ Cliente antiguo cerrado")
+                    except Exception as e:
+                        print(f"⚠️ Error cerrando cliente antiguo: {e}")
+        
+        # Esperar un momento para que SQLite libere el lock
+        time.sleep(0.1)
+        
+        # Intentar crear el cliente con reintentos en caso de "database is locked"
+        max_retries = 3
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                # Usar un loop dedicado para este cliente
+                loop = get_event_loop()
+                client = TelegramClient(session_name, api_id, api_hash, loop=loop)
+                
+                # Conectar si no está conectado
+                if not client.is_connected():
+                    try:
+                        run_async(client.connect(), loop, timeout=10)
+                        if not client.is_connected():
+                            print(f"⚠️ Cliente creado pero no conectado después de connect()")
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if 'database is locked' in error_msg or 'locked' in error_msg:
+                            if attempt < max_retries - 1:
+                                print(f"⚠️ Database locked, reintentando en {retry_delay}s (intento {attempt + 1}/{max_retries})...")
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Backoff exponencial
+                                continue
+                        raise
+                
+                # Guardar en telegram_clients
+                telegram_clients[phone] = {
+                    'client': client,
+                    'api_id': api_id,
+                    'api_hash': api_hash,
+                    'session_name': session_name,
+                    'loop': loop
+                }
+                
+                return client
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'database is locked' in error_msg or 'locked' in error_msg:
+                    if attempt < max_retries - 1:
+                        print(f"⚠️ Database locked al crear cliente, reintentando en {retry_delay}s (intento {attempt + 1}/{max_retries})...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Backoff exponencial
+                        continue
+                    else:
+                        print(f"❌ Error: database is locked después de {max_retries} intentos")
+                        raise Exception("La base de datos de sesión está bloqueada. Por favor, espera unos segundos e intenta de nuevo.")
+                else:
+                    print(f"❌ Error conectando cliente en get_or_create_client: {e}")
+                    import traceback
+                    print(traceback.format_exc())
+                    raise
 
 @app.route('/api/chat/<chat_id>/messages', methods=['GET'])
 def get_messages(chat_id):

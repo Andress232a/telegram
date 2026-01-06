@@ -2888,10 +2888,14 @@ def get_video(video_id):
                             
                             valid_limit = int(valid_limit)
                             
+                            # Log mínimo solo en caso de error
+                            if valid_limit % 1024 != 0 or valid_limit > remaining_size or valid_limit > max_limit:
+                                print(f"ERROR: limit={valid_limit}, remaining={remaining_size}, max={max_limit}, %1024={valid_limit % 1024}", flush=True)
+                            
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,
-                                limit=int(valid_limit)  # Asegurar que sea int
+                                limit=valid_limit
                             ))
                             
                             # El resultado de GetFileRequest puede tener diferentes estructuras

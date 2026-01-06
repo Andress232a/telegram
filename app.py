@@ -3003,14 +3003,20 @@ def get_video(video_id):
                                     
                                     # Si es un error de limit, intentar con un chunk más pequeño
                                     if 'limit' in error_msg.lower() or 'LimitInvalid' in error_type:
-                                        if final_limit > 1024:
-                                            final_limit = 1024
+                                        # Calcular un limit más pequeño que sea múltiplo de 1024 y no exceda remaining_in_file
+                                        retry_limit = min(1024, remaining_in_file)
+                                        if retry_limit >= 1024:
+                                            retry_limit = (int(retry_limit) // 1024) * 1024
+                                        else:
+                                            retry_limit = int(retry_limit) if retry_limit > 0 else 0
+                                        
+                                        if retry_limit > 0 and retry_limit <= remaining_in_file:
                                             try:
-                                                print(f"🔄 Reintentando con limit más pequeño: {final_limit}", flush=True)
+                                                print(f"🔄 Reintentando con limit más pequeño: {retry_limit} (remaining_in_file={remaining_in_file}, offset={current_offset})", flush=True)
                                                 result = await client(GetFileRequest(
                                                     location=file_location,
                                                     offset=current_offset,
-                                                    limit=final_limit
+                                                    limit=retry_limit
                                                 ))
                                                 chunk_data = None
                                                 if hasattr(result, 'bytes'):

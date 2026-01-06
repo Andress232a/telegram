@@ -2849,9 +2849,13 @@ def get_video(video_id):
                         # Descargar SOLO el rango solicitado usando GetFileRequest
                         # REFACTORIZADO: Dividir cualquier rango en múltiples GetFileRequest de máximo 512KB
                         # NUNCA enviar un limit mayor a 524288 bytes (512KB)
+                        # LIMITAR el tamaño máximo por request HTTP para evitar descargas excesivas
                         try:
                             # Límite máximo absoluto para GetFileRequest (512KB = 524288 bytes)
                             MAX_CHUNK_SIZE = 512 * 1024  # 512KB - NUNCA exceder este valor
+                            
+                            # Límite máximo por request HTTP (5MB) - el navegador hará múltiples requests
+                            MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB máximo por respuesta HTTP
                             
                             # Asegurar que offset sea múltiplo de 1024
                             valid_offset = (int(start) // 1024) * 1024
@@ -2861,6 +2865,12 @@ def get_video(video_id):
                             if valid_offset != start:
                                 # Si el offset cambió, ajustar el tamaño a descargar
                                 remaining_to_download = chunk_size + (start - valid_offset)
+                            
+                            # LIMITAR el tamaño máximo a descargar por request HTTP
+                            # Esto evita que el código intente descargar rangos enormes que causan timeouts
+                            if remaining_to_download > MAX_HTTP_RESPONSE_SIZE:
+                                remaining_to_download = MAX_HTTP_RESPONSE_SIZE
+                                print(f"⚠️ Rango solicitado ({chunk_size} bytes) excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
                             
                             buffer = BytesIO()
                             current_offset = valid_offset

@@ -2927,6 +2927,7 @@ def get_video(video_id):
                                     break
                                 
                                 # Asegurar que limit sea múltiplo de 1024 (excepto si es menor que 1024)
+                                # Y que NUNCA exceda remaining_in_file
                                 if current_chunk_size >= 1024:
                                     final_limit = (int(current_chunk_size) // 1024) * 1024
                                     if final_limit == 0:
@@ -2938,7 +2939,29 @@ def get_video(video_id):
                                 if final_limit > MAX_CHUNK_SIZE:
                                     final_limit = MAX_CHUNK_SIZE
                                 
-                                print(f"🔍 GetFileRequest: offset={current_offset}, limit={final_limit}, remaining={remaining_to_download}, offset%1024={current_offset % 1024}, limit%1024={final_limit % 1024}", flush=True)
+                                # CRÍTICO: Asegurar que final_limit nunca exceda remaining_in_file
+                                if final_limit > remaining_in_file:
+                                    if remaining_in_file < 1024:
+                                        # Si el tamaño restante es menor que 1024, usar el tamaño exacto
+                                        final_limit = int(remaining_in_file)
+                                    else:
+                                        # Redondear hacia abajo al múltiplo de 1024 más cercano
+                                        final_limit = (int(remaining_in_file) // 1024) * 1024
+                                        if final_limit == 0:
+                                            final_limit = int(remaining_in_file) if remaining_in_file > 0 else 0
+                                
+                                # Verificación final absoluta: asegurar que es múltiplo de 1024 (excepto si es < 1024)
+                                if final_limit >= 1024 and (final_limit % 1024) != 0:
+                                    final_limit = (int(final_limit) // 1024) * 1024
+                                    if final_limit == 0:
+                                        final_limit = 1024 if remaining_in_file >= 1024 else int(remaining_in_file)
+                                
+                                # Si final_limit es 0 o mayor que remaining_in_file, no podemos descargar más
+                                if final_limit <= 0 or final_limit > remaining_in_file:
+                                    print(f"⚠️ No se puede descargar más: final_limit={final_limit}, remaining_in_file={remaining_in_file}", flush=True)
+                                    break
+                                
+                                print(f"🔍 GetFileRequest: offset={current_offset}, limit={final_limit}, remaining_to_download={remaining_to_download}, remaining_in_file={remaining_in_file}, offset%1024={current_offset % 1024}, limit%1024={final_limit % 1024}", flush=True)
                                 
                                 try:
                                     result = await client(GetFileRequest(

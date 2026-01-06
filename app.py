@@ -2952,8 +2952,8 @@ def get_video(video_id):
                             traceback_str = traceback.format_exc()
                             print(traceback_str)
                             
-                            # Si el error es de file_reference obsoleto, intentar actualizarlo
-                            if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e):
+                            # 🚀 OPTIMIZADO: Si el error es de file_reference obsoleto, intentar actualizarlo con reintentos
+                            if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e) or 'FILE_REFERENCE_EXPIRED' in str(e) or 'expired' in error_msg.lower():
                                 print(f"🔄 Error de file_reference en range, intentando actualizar mensaje...")
                                 try:
                                     updated_messages = await client.get_messages(target_chat, ids=message_id)
@@ -2994,8 +2994,14 @@ def get_video(video_id):
                                 raise Exception(f"Error descargando rango del video: {error_type}: {error_msg}")
                     return None
                 
-                # Timeout dinámico (más corto porque solo descargamos un chunk)
-                timeout_seconds = min(60, max(10, int(chunk_size / (1024 * 1024)) * 5))
+                # 🚀 OPTIMIZADO: Timeout dinámico para range requests
+                # Aumentado para videos grandes y de alta calidad
+                if chunk_size > 10 * 1024 * 1024:  # > 10MB
+                    timeout_seconds = 120  # 2 minutos para chunks grandes
+                elif chunk_size > 5 * 1024 * 1024:  # > 5MB
+                    timeout_seconds = 90  # 1.5 minutos
+                else:
+                    timeout_seconds = min(60, max(10, int(chunk_size / (1024 * 1024)) * 5))
                 
                 chunk_data = run_async(download_range(), client_loop, timeout=timeout_seconds)
                 
@@ -3020,19 +3026,19 @@ def get_video(video_id):
         print(f"📥 Solicitud inicial, sirviendo primeros bytes para metadata...")
         
         async def download_initial_chunk():
-            # Para videos pesados, necesitamos un chunk inicial más grande para que el navegador
-            # tenga suficiente información para empezar a reproducir mientras descarga el resto
-            # Para videos de 4GB+, usamos chunks más grandes para mejor experiencia
+            # 🚀 OPTIMIZADO: Para videos pesados, usar chunks iniciales MÁS PEQUEÑOS
+            # Esto permite que el navegador empiece a reproducir más rápido
+            # El navegador hará range requests automáticamente para el resto
             if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB (muy pesados)
-                initial_size = min(20 * 1024 * 1024, file_size)  # 20MB para videos muy grandes
+                initial_size = min(5 * 1024 * 1024, file_size)  # 5MB - más pequeño para respuesta rápida
             elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
-                initial_size = min(10 * 1024 * 1024, file_size)  # 10MB para videos grandes
+                initial_size = min(3 * 1024 * 1024, file_size)  # 3MB para videos grandes
             elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
-                initial_size = min(5 * 1024 * 1024, file_size)  # 5MB
+                initial_size = min(2 * 1024 * 1024, file_size)  # 2MB
             elif file_size > 10 * 1024 * 1024:  # Videos > 10MB
-                initial_size = min(3 * 1024 * 1024, file_size)  # 3MB
-            else:
                 initial_size = min(1024 * 1024, file_size)  # 1MB
+            else:
+                initial_size = min(512 * 1024, file_size)  # 512KB para videos pequeños
             
             print(f"📊 Descargando chunk inicial de {initial_size / (1024*1024):.2f}MB para video de {file_size / (1024*1024):.2f}MB ({file_size / (1024*1024*1024):.2f}GB)")
             
@@ -3177,40 +3183,51 @@ def get_video(video_id):
                     traceback_str = traceback.format_exc()
                     print(traceback_str)
                     
-                    # Si el error es de file_reference obsoleto, intentar actualizarlo
-                    if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e):
-                        print(f"🔄 Error de file_reference, intentando actualizar mensaje...")
-                        try:
-                            updated_messages = await client.get_messages(target_chat, ids=message_id)
-                            if updated_messages and hasattr(updated_messages.media, 'document'):
-                                document = updated_messages.media.document
-                                file_location = InputDocumentFileLocation(
-                                    id=document.id,
-                                    access_hash=document.access_hash,
-                                    file_reference=document.file_reference,
-                                    thumb_size=''
-                                )
-                                print(f"✅ file_reference actualizado, reintentando GetFileRequest...")
-                                # Reintentar con file_reference actualizado
-                                retry_limit = get_valid_limit(min(1024 * 1024, initial_size))
-                                result = await client(GetFileRequest(
-                                    location=file_location,
-                                    offset=0,
-                                    limit=retry_limit
-                                ))
-                                data = None
-                                if hasattr(result, 'bytes'):
-                                    data = result.bytes
-                                elif hasattr(result, 'data'):
-                                    data = result.data
-                                elif isinstance(result, bytes):
-                                    data = result
-                                
-                                if data and len(data) > 0:
-                                    print(f"✅ GetFileRequest exitoso después de actualizar file_reference: {len(data)} bytes")
-                                    return data
-                        except Exception as retry_error:
-                            print(f"⚠️ Error en reintento con file_reference actualizado: {retry_error}")
+                    # 🚀 OPTIMIZADO: Si el error es de file_reference obsoleto, intentar actualizarlo con reintentos
+                    if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e) or 'FILE_REFERENCE_EXPIRED' in str(e) or 'expired' in error_msg.lower():
+                        print(f"🔄 Error de file_reference, intentando actualizar mensaje con reintentos...")
+                        max_retries = 3
+                        for retry_attempt in range(max_retries):
+                            try:
+                                print(f"🔄 Reintento {retry_attempt + 1}/{max_retries} actualizando file_reference...")
+                                updated_messages = await client.get_messages(target_chat, ids=message_id)
+                                if updated_messages and hasattr(updated_messages.media, 'document'):
+                                    document = updated_messages.media.document
+                                    file_location = InputDocumentFileLocation(
+                                        id=document.id,
+                                        access_hash=document.access_hash,
+                                        file_reference=document.file_reference,
+                                        thumb_size=''
+                                    )
+                                    print(f"✅ file_reference actualizado, reintentando GetFileRequest...")
+                                    # Reintentar con file_reference actualizado - usar chunk más pequeño para mayor estabilidad
+                                    retry_limit = get_valid_limit(min(512 * 1024, initial_size))  # 512KB máximo en reintentos
+                                    result = await client(GetFileRequest(
+                                        location=file_location,
+                                        offset=0,
+                                        limit=retry_limit
+                                    ))
+                                    data = None
+                                    if hasattr(result, 'bytes'):
+                                        data = result.bytes
+                                    elif hasattr(result, 'data'):
+                                        data = result.data
+                                    elif isinstance(result, bytes):
+                                        data = result
+                                    
+                                    if data and len(data) > 0:
+                                        print(f"✅ GetFileRequest exitoso después de actualizar file_reference (intento {retry_attempt + 1}): {len(data)} bytes")
+                                        return data
+                                    else:
+                                        print(f"⚠️ Reintento {retry_attempt + 1} no devolvió datos, intentando siguiente...")
+                                        if retry_attempt < max_retries - 1:
+                                            await asyncio.sleep(0.5)  # Esperar un poco antes del siguiente intento
+                                        continue
+                            except Exception as retry_error:
+                                print(f"⚠️ Error en reintento {retry_attempt + 1} con file_reference actualizado: {retry_error}")
+                                if retry_attempt < max_retries - 1:
+                                    await asyncio.sleep(0.5)  # Esperar un poco antes del siguiente intento
+                                continue
                     
                     # No hay fallback viable - GetFileRequest es la única forma de streaming progresivo
                     # Si falla, el error ya fue manejado arriba con reintentos de file_reference
@@ -3223,11 +3240,15 @@ def get_video(video_id):
             # Si llegamos aquí sin retornar, algo salió mal
             raise Exception("No se pudo descargar el chunk inicial del video: función retornó None")
         
-        # Timeout dinámico basado en el tamaño del video
-        # Para videos muy grandes (4GB+), necesitamos más tiempo
-        if file_size > 2 * 1024 * 1024 * 1024:  # > 2GB
-            timeout_initial = 180  # 3 minutos para videos muy grandes
+        # 🚀 OPTIMIZADO: Timeout dinámico basado en el tamaño del video
+        # Aumentado para videos muy grandes y de alta calidad
+        if file_size > 2 * 1024 * 1024 * 1024:  # > 2GB (videos muy pesados)
+            timeout_initial = 300  # 5 minutos para videos muy grandes
+        elif file_size > 1 * 1024 * 1024 * 1024:  # > 1GB
+            timeout_initial = 240  # 4 minutos
         elif file_size > 500 * 1024 * 1024:  # > 500MB
+            timeout_initial = 180  # 3 minutos
+        elif file_size > 100 * 1024 * 1024:  # > 100MB
             timeout_initial = 120  # 2 minutos
         else:
             timeout_initial = 60  # 1 minuto para videos normales

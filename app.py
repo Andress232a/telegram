@@ -15,6 +15,7 @@ from datetime import datetime
 import threading
 import pymysql
 from contextlib import contextmanager
+import tempfile
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(16)
@@ -1599,7 +1600,8 @@ def send_message():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
-    """Subir video a Telegram: guarda temporalmente en local, sube a la nube, y borra local"""
+    """Subir video directamente a Telegram: usa archivo temporal que se elimina automáticamente después de la subida.
+    No guarda archivos en disco permanente, solo usa archivos temporales del sistema."""
     # Asegurarse de que threading está disponible en el scope local
     import threading as threading_module
     
@@ -1645,16 +1647,21 @@ def upload_video():
     session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
     
     # Inicializar progreso ANTES de guardar el archivo
-    upload_progress[upload_id] = {'progress': 0, 'status': 'saving', 'current': 0, 'total': 0, 'message': 'Iniciando subida...'}
+    upload_progress[upload_id] = {'progress': 0, 'status': 'uploading', 'current': 0, 'total': 0, 'message': 'Iniciando subida directa a Telegram...'}
     print(f"✅ [UPLOAD] Upload ID creado: {upload_id}", flush=True)
     print(f"📋 [UPLOAD] Upload IDs disponibles después de crear: {list(upload_progress.keys())}", flush=True)
     
-    # Guardar archivo temporalmente en local
-    local_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{timestamp}_{filename}")
+    # 🚀 NUEVA ARQUITECTURA: Usar archivo temporal que se elimina automáticamente
+    # Esto evita guardar archivos grandes en uploads/ y es más eficiente
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}", dir=tempfile.gettempdir())
+    local_path = temp_file.name
+    temp_file.close()  # Cerrar el archivo temporal, lo abriremos de nuevo para escribir
     
-    # Actualizar estado para indicar que se está guardando el archivo
-    upload_progress[upload_id]['status'] = 'saving'
-    upload_progress[upload_id]['message'] = 'Guardando archivo en servidor...'
+    print(f"💾 [UPLOAD] Archivo temporal creado: {local_path}", flush=True)
+    
+    # Actualizar estado para indicar que se está subiendo directamente
+    upload_progress[upload_id]['status'] = 'uploading'
+    upload_progress[upload_id]['message'] = 'Subiendo directamente a Telegram...'
     
     # Obtener tamaño del archivo si está disponible
     file_size_from_request = None
@@ -1682,46 +1689,48 @@ def upload_video():
     # CRÍTICO: Definir upload_in_background ANTES de usarla
     def upload_in_background(phone_param, api_id_param, api_hash_param, session_name_param, chat_id_param, local_path_param, filename_param, upload_id_param, timestamp_param, file_size_param, description_param=''):
         try:
-            # STREAMING: Para archivos grandes (>50MB), empezar a subir cuando tengamos 50MB
-            # Para archivos pequeños, esperar a que esté completamente guardado
-            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo esté listo: {local_path_param}", flush=True)
+            # 🚀 NUEVA ARQUITECTURA: Esperar a que el archivo esté completamente guardado
+            # Ya no hay streaming parcial, esperamos a que termine de guardarse y luego subimos
+            print(f"⏳ [UPLOAD-BG] Esperando a que el archivo esté completamente guardado: {local_path_param}", flush=True)
             
-            min_size_to_start = 50 * 1024 * 1024  # 50MB mínimo para empezar streaming
-            max_wait_time = 300  # 5 minutos máximo esperando
-            wait_interval = 0.5  # Verificar cada medio segundo para respuesta más rápida
+            max_wait_time = 600  # 10 minutos máximo esperando (para archivos muy grandes)
+            wait_interval = 1.0  # Verificar cada segundo
             waited = 0
             last_size = 0
             stable_count = 0  # Contador para detectar cuando el archivo deja de crecer
             
-            # Esperar a que el archivo exista y esté listo
+            # Esperar a que el archivo exista y esté completamente guardado
             while waited < max_wait_time:
                 if os.path.exists(local_path_param):
                     current_size = os.path.getsize(local_path_param)
                     
-                    # Si el archivo es pequeño (<50MB), esperar a que esté completamente guardado
-                    # Detectamos esto cuando el tamaño deja de cambiar
-                    if file_size_param > 0 and file_size_param < min_size_to_start:
-                        # Archivo pequeño: esperar a que esté completamente guardado
+                    # Si conocemos el tamaño esperado, esperar a que esté completo
+                    if file_size_param > 0:
                         if current_size >= file_size_param:
-                            print(f"✅ [UPLOAD-BG] Archivo pequeño completamente guardado ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                            print(f"✅ [UPLOAD-BG] Archivo completamente guardado ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
                             break
                         elif current_size == last_size:
                             stable_count += 1
-                            # Si el tamaño no cambia por 2 segundos, asumir que está completo
-                            if stable_count >= 4:  # 4 * 0.5s = 2 segundos
-                                print(f"✅ [UPLOAD-BG] Archivo pequeño parece estar completo ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                            # Si el tamaño no cambia por 3 segundos, asumir que está completo
+                            if stable_count >= 3:  # 3 * 1s = 3 segundos
+                                print(f"✅ [UPLOAD-BG] Archivo parece estar completo ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
                                 break
                         else:
                             stable_count = 0
-                    else:
-                        # Archivo grande: empezar cuando tengamos 50MB
-                        if current_size >= min_size_to_start:
-                            print(f"✅ [UPLOAD-BG] Archivo grande tiene tamaño suficiente ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
-                            break
-                        elif current_size > 0:
-                            # Si tiene algo pero no suficiente, esperar un poco más
+                            # Actualizar progreso de guardado (0-10% del total)
                             if upload_id_param in upload_progress:
-                                upload_progress[upload_id_param]['message'] = f'Preparando archivo... ({current_size / (1024*1024):.1f}MB)'
+                                save_progress = int((current_size / file_size_param) * 10)  # Máximo 10% para guardado
+                                upload_progress[upload_id_param]['progress'] = save_progress
+                                upload_progress[upload_id_param]['message'] = f'Guardando archivo... {save_progress}%'
+                    else:
+                        # Si no conocemos el tamaño, esperar a que el tamaño se estabilice
+                        if current_size == last_size:
+                            stable_count += 1
+                            if stable_count >= 3:  # 3 segundos sin cambios
+                                print(f"✅ [UPLOAD-BG] Archivo parece estar completo ({current_size / (1024*1024):.1f}MB), iniciando subida...", flush=True)
+                                break
+                        else:
+                            stable_count = 0
                     
                     last_size = current_size
                 else:
@@ -1738,7 +1747,7 @@ def upload_video():
                 waited += wait_interval
             
             if waited >= max_wait_time:
-                # Si no alcanzó el tamaño mínimo, intentar de todas formas si existe
+                # Si no terminó de guardarse, intentar de todas formas si existe
                 if os.path.exists(local_path_param):
                     current_size = os.path.getsize(local_path_param)
                     if current_size > 0:
@@ -1746,13 +1755,13 @@ def upload_video():
                     else:
                         raise Exception("El archivo existe pero está vacío")
                 else:
-                    raise Exception("Timeout esperando a que el archivo exista (5 minutos)")
+                    raise Exception("Timeout esperando a que el archivo exista (10 minutos)")
             
             # Verificar que el archivo existe
             if not os.path.exists(local_path_param):
                 raise Exception(f"El archivo no existe: {local_path_param}")
             
-            # Obtener el tamaño actual del archivo (puede seguir creciendo)
+            # Obtener el tamaño actual del archivo
             actual_file_size = os.path.getsize(local_path_param)
             if file_size_param == 0:
                 file_size_param = actual_file_size
@@ -1764,7 +1773,7 @@ def upload_video():
             if upload_id_param not in upload_progress:
                 print(f"⚠️ [UPLOAD-BG] Upload ID {upload_id_param} no encontrado al iniciar background, inicializando...", flush=True)
                 upload_progress[upload_id_param] = {
-                    'progress': 30,  # 30% porque ya se guardó el mínimo
+                    'progress': 10,  # 10% porque ya se guardó
                     'status': 'uploading', 
                     'current': 0, 
                     'total': file_size_param
@@ -1773,7 +1782,7 @@ def upload_video():
                 # Asegurarse de que el total esté configurado
                 upload_progress[upload_id_param]['total'] = file_size_param
                 upload_progress[upload_id_param]['status'] = 'uploading'
-                upload_progress[upload_id_param]['progress'] = 30  # 30% = guardado inicial completo
+                upload_progress[upload_id_param]['progress'] = 10  # 10% = guardado completo
                 upload_progress[upload_id_param]['message'] = 'Subiendo a Telegram...'
             
             print(f"🚀 [UPLOAD-BG] Iniciando subida en background - Upload ID: {upload_id_param}", flush=True)
@@ -1802,14 +1811,14 @@ def upload_video():
             print(f"✅ Usando cliente principal para subida en background")
             
             # Callback para el progreso
-            # El progreso de Telegram (0-100%) se mapea a 30-100% del progreso total
-            # porque el guardado inicial (0-30%) ya se completó
+            # El progreso de Telegram (0-100%) se mapea a 10-100% del progreso total
+            # porque el guardado inicial (0-10%) ya se completó
             def progress_callback(current, total):
                 if total > 0:
                     # Progreso de Telegram (0-100%)
                     telegram_progress = (current / total) * 100
-                    # Mapear a progreso total: 30% (guardado inicial) + 70% * progreso_telegram
-                    total_progress = 30 + int(telegram_progress * 0.7)
+                    # Mapear a progreso total: 10% (guardado inicial) + 90% * progreso_telegram
+                    total_progress = 10 + int(telegram_progress * 0.9)
                     
                     # Asegurarse de que el upload_id existe en el diccionario
                     if upload_id_param not in upload_progress:
@@ -1868,25 +1877,25 @@ def upload_video():
             upload_progress[upload_id_param]['progress'] = 100
             
             # ✅ CONFIRMADO: Video subido a la nube de Telegram
-            # Ahora borrar el archivo local inmediatamente
+            # 🗑️ CRÍTICO: Eliminar archivo temporal inmediatamente (no guardar en disco)
             try:
                 if os.path.exists(local_path_param):
                     os.remove(local_path_param)
-                    print(f"🗑️ Archivo local eliminado: {local_path_param}")
+                    print(f"🗑️ [UPLOAD-BG] Archivo temporal eliminado: {local_path_param}", flush=True)
                 else:
-                    print(f"⚠️ Archivo no existe (ya fue eliminado): {local_path_param}")
+                    print(f"⚠️ [UPLOAD-BG] Archivo temporal no existe (ya fue eliminado): {local_path_param}", flush=True)
             except Exception as e:
-                print(f"⚠️ Error eliminando archivo local: {e}")
+                print(f"⚠️ [UPLOAD-BG] Error eliminando archivo temporal: {e}", flush=True)
                 import traceback
-                print(traceback.format_exc())
+                print(traceback.format_exc(), flush=True)
                 # Intentar de nuevo después de un segundo
                 try:
                     time.sleep(1)
                     if os.path.exists(local_path_param):
                         os.remove(local_path_param)
-                        print(f"🗑️ Archivo local eliminado en segundo intento: {local_path_param}")
+                        print(f"🗑️ [UPLOAD-BG] Archivo temporal eliminado en segundo intento: {local_path_param}", flush=True)
                 except Exception as e2:
-                    print(f"❌ Error crítico eliminando archivo: {e2}")
+                    print(f"❌ [UPLOAD-BG] Error crítico eliminando archivo temporal: {e2}", flush=True)
             
             # Generar URL alternativa para ver el video
             video_id = secrets.token_urlsafe(16)
@@ -1918,21 +1927,21 @@ def upload_video():
                 upload_progress[upload_id_param]['error'] = error_msg
                 upload_progress[upload_id_param]['error_details'] = error_traceback
             
-            # Limpiar archivo local en caso de error
+            # 🗑️ Limpiar archivo temporal en caso de error
             try:
                 if os.path.exists(local_path_param):
                     os.remove(local_path_param)
-                    print(f"🗑️ Archivo local eliminado después de error: {local_path_param}")
+                    print(f"🗑️ [UPLOAD-BG] Archivo temporal eliminado después de error: {local_path_param}", flush=True)
                 else:
-                    print(f"⚠️ Archivo no existe para eliminar: {local_path_param}")
+                    print(f"⚠️ [UPLOAD-BG] Archivo temporal no existe para eliminar: {local_path_param}", flush=True)
             except Exception as e:
-                print(f"⚠️ Error eliminando archivo después de error: {e}")
+                print(f"⚠️ [UPLOAD-BG] Error eliminando archivo temporal después de error: {e}", flush=True)
                 # Intentar de nuevo
                 try:
                     time.sleep(1)
                     if os.path.exists(local_path_param):
                         os.remove(local_path_param)
-                        print(f"🗑️ Archivo local eliminado en segundo intento: {local_path_param}")
+                        print(f"🗑️ [UPLOAD-BG] Archivo temporal eliminado en segundo intento: {local_path_param}", flush=True)
                 except:
                     pass
     
@@ -2136,27 +2145,27 @@ def upload_video():
                 print(f"💾 [SAVE-BG] Tamaño esperado: {file_size_from_request} bytes ({file_size_from_request / (1024*1024):.2f} MB)" if file_size_from_request else "💾 [SAVE-BG] Tamaño desconocido", flush=True)
                 
                 # Actualizar progreso inmediatamente para indicar que empezó
-                upload_progress[upload_id]['status'] = 'saving'
-                upload_progress[upload_id]['message'] = 'Guardando archivo... 0%'
+                upload_progress[upload_id]['status'] = 'uploading'
+                upload_progress[upload_id]['message'] = 'Preparando archivo para subida directa... 0%'
                 upload_progress[upload_id]['progress'] = 0
                 print(f"💾 [SAVE-BG] Progreso inicializado: {upload_progress[upload_id]}", flush=True)
                 
                 # Usar file.save() que es eficiente para archivos grandes
                 # Flask/Werkzeug maneja el streaming internamente
                 file.seek(0)
-                print(f"💾 [SAVE-BG] Llamando file.save()...", flush=True)
+                print(f"💾 [SAVE-BG] Guardando en archivo temporal: {local_path}", flush=True)
                 file.save(local_path)
-                print(f"💾 [SAVE-BG] file.save() completado", flush=True)
+                print(f"💾 [SAVE-BG] Archivo temporal guardado completamente", flush=True)
                 
                 actual_file_size = os.path.getsize(local_path)
-                print(f"✅ [SAVE-BG] Archivo guardado completamente: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+                print(f"✅ [SAVE-BG] Archivo temporal listo: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
                 
-                # Actualizar progreso final
+                # Actualizar progreso final (10% = guardado completo, 90% restante = subida a Telegram)
                 upload_progress[upload_id]['total'] = actual_file_size
-                upload_progress[upload_id]['status'] = 'saved'
-                upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
-                upload_progress[upload_id]['progress'] = 30
-                print(f"✅ [SAVE-BG] Progreso actualizado a 30%: {upload_progress[upload_id]}", flush=True)
+                upload_progress[upload_id]['status'] = 'uploading'
+                upload_progress[upload_id]['message'] = 'Archivo listo, iniciando subida a Telegram...'
+                upload_progress[upload_id]['progress'] = 10
+                print(f"✅ [SAVE-BG] Progreso actualizado a 10%: {upload_progress[upload_id]}", flush=True)
                 
                 # Iniciar subida a Telegram
                 print(f"📤 [SAVE-BG] Iniciando subida a Telegram...", flush=True)
@@ -2197,28 +2206,29 @@ def upload_video():
                             no_progress_count = 0  # Resetear contador
                             
                             if file_size_from_request and file_size_from_request > 0:
-                                save_progress = min(30, int((current_size / file_size_from_request) * 30))
+                                save_progress = min(10, int((current_size / file_size_from_request) * 10))  # Máximo 10% para guardado
                                 
                                 # Actualizar siempre que cambie el tamaño, no solo el progreso
                                 upload_progress[upload_id]['progress'] = save_progress
                                 upload_progress[upload_id]['current'] = current_size
                                 upload_progress[upload_id]['total'] = file_size_from_request
-                                upload_progress[upload_id]['status'] = 'saving'
-                                upload_progress[upload_id]['message'] = f'Guardando archivo... {save_progress}%'
+                                upload_progress[upload_id]['status'] = 'uploading'
+                                upload_progress[upload_id]['message'] = f'Preparando archivo... {save_progress}%'
                                 
                                 # Loggear cada vez que cambie el progreso
                                 if save_progress != last_progress:
                                     mb_saved = current_size / (1024 * 1024)
                                     mb_total = file_size_from_request / (1024 * 1024)
-                                    print(f"💾 [MONITOR] Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
+                                    print(f"💾 [MONITOR] Preparando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
                                     last_progress = save_progress
                             else:
                                 mb_saved = current_size / (1024 * 1024)
-                                upload_progress[upload_id]['progress'] = min(30, int((current_size / (4 * 1024 * 1024 * 1024)) * 30))  # Estimar basado en 4GB
+                                upload_progress[upload_id]['progress'] = min(10, int((current_size / (4 * 1024 * 1024 * 1024)) * 10))  # Estimar basado en 4GB, máximo 10%
                                 upload_progress[upload_id]['current'] = current_size
-                                upload_progress[upload_id]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
+                                upload_progress[upload_id]['status'] = 'uploading'
+                                upload_progress[upload_id]['message'] = f'Preparando archivo... ({mb_saved:.1f}MB)'
                                 if int(mb_saved) % 10 == 0:  # Loggear cada 10MB
-                                    print(f"💾 [MONITOR] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
+                                    print(f"💾 [MONITOR] Preparando: {mb_saved:.1f}MB guardados...", flush=True)
                             
                             last_size = current_size
                             
@@ -2292,24 +2302,24 @@ def upload_video():
                 print(f"🚀 [BG] Iniciando procesamiento en background para upload_id: {upload_id}", flush=True)
                 
                 # Actualizar estado
-                upload_progress[upload_id]['status'] = 'saving'
-                upload_progress[upload_id]['message'] = 'Guardando archivo...'
+                upload_progress[upload_id]['status'] = 'uploading'
+                upload_progress[upload_id]['message'] = 'Preparando archivo para subida directa...'
                 upload_progress[upload_id]['progress'] = 0
                 
-                # Guardar el archivo desde el buffer en memoria
-                print(f"💾 [BG] Guardando archivo desde buffer en memoria...", flush=True)
+                # Guardar el archivo desde el buffer en memoria al archivo temporal
+                print(f"💾 [BG] Guardando archivo temporal desde buffer en memoria...", flush=True)
                 file_buffer.seek(0)  # Asegurarse de que estamos al inicio del buffer
                 with open(local_path, 'wb') as f:
                     shutil.copyfileobj(file_buffer, f)
                 
                 actual_file_size = os.path.getsize(local_path)
-                print(f"✅ [BG] Archivo guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
+                print(f"✅ [BG] Archivo temporal guardado: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
                 
-                # Actualizar progreso
+                # Actualizar progreso (10% = guardado completo, 90% restante = subida a Telegram)
                 upload_progress[upload_id]['total'] = actual_file_size
-                upload_progress[upload_id]['status'] = 'saved'
-                upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
-                upload_progress[upload_id]['progress'] = 30
+                upload_progress[upload_id]['status'] = 'uploading'
+                upload_progress[upload_id]['message'] = 'Archivo listo, iniciando subida a Telegram...'
+                upload_progress[upload_id]['progress'] = 10
                 
                 # Iniciar subida a Telegram inmediatamente
                 print(f"📤 [BG] Iniciando subida a Telegram...", flush=True)

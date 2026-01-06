@@ -2864,6 +2864,9 @@ def get_video(video_id):
                             
                             buffer = BytesIO()
                             current_offset = valid_offset
+                            chunks_downloaded = 0
+                            
+                            print(f"📥 Descargando rango: offset={valid_offset} (original={start}), tamaño={remaining_to_download} bytes, file_size={file_size}", flush=True)
                             
                             # Descargar en chunks de 512KB hasta completar el rango solicitado
                             while remaining_to_download > 0:
@@ -2910,7 +2913,11 @@ def get_video(video_id):
                                         buffer.write(chunk_data)
                                         current_offset += len(chunk_data)
                                         remaining_to_download -= len(chunk_data)
+                                        chunks_downloaded += 1
+                                        if chunks_downloaded % 10 == 0:
+                                            print(f"📊 Progreso: {chunks_downloaded} chunks descargados, {buffer.tell()} bytes en buffer, {remaining_to_download} bytes restantes", flush=True)
                                     else:
+                                        print(f"⚠️ Chunk vacío en offset {current_offset}, terminando descarga", flush=True)
                                         break
                                 except Exception as chunk_error:
                                     # Si falla un chunk, intentar con uno más pequeño
@@ -2942,7 +2949,10 @@ def get_video(video_id):
                                         break
                             
                             # Devolver los datos descargados
-                            if buffer.tell() > 0:
+                            total_downloaded = buffer.tell()
+                            print(f"✅ Descarga completada: {chunks_downloaded} chunks, {total_downloaded} bytes totales", flush=True)
+                            
+                            if total_downloaded > 0:
                                 buffer.seek(0)
                                 data = buffer.read()
                                 
@@ -2951,14 +2961,18 @@ def get_video(video_id):
                                     skip_bytes = start - valid_offset
                                     if skip_bytes > 0 and skip_bytes < len(data):
                                         data = data[skip_bytes:]
+                                        print(f"🔧 Ajustando datos: saltando {skip_bytes} bytes, tamaño final: {len(data)} bytes", flush=True)
                                 
                                 # Limitar al tamaño solicitado
                                 if len(data) > chunk_size:
                                     data = data[:chunk_size]
+                                    print(f"✂️ Recortando datos a {chunk_size} bytes (solicitado)", flush=True)
                                 
                                 if len(data) > 0:
+                                    print(f"✅ Devolviendo {len(data)} bytes al cliente", flush=True)
                                     return data
                             
+                            print(f"❌ No se descargó ningún dato (buffer.tell()={total_downloaded})", flush=True)
                             raise Exception("No se pudo descargar ningún chunk del rango solicitado")
                             
                             # El resultado de GetFileRequest puede tener diferentes estructuras

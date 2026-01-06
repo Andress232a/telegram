@@ -2871,15 +2871,13 @@ def get_video(video_id):
                             # 3. El máximo permitido según la posición
                             requested_limit = min(chunk_size, remaining_size, max_limit)
                             
-                            # 🚀 CRÍTICO: Cuando estamos muy cerca del final (99.9%+), usar el tamaño restante exacto
-                            # Telegram permite usar el tamaño restante exacto cuando estamos en el último chunk
-                            # Esto es especialmente importante cuando remaining_size no es múltiplo de 1024
-                            # Usamos un umbral de 100KB para considerar si estamos en el último chunk
-                            if is_near_end and remaining_size <= 100 * 1024:
-                                # Muy cerca del final y remaining_size <= 100KB: usar exactamente remaining_size
-                                # Telegram permite esto en el último chunk
+                            # 🚀 CRÍTICO: Telegram SIEMPRE requiere que limit sea múltiplo de 1024, sin excepciones
+                            # Incluso cuando estamos en el último chunk, debemos redondear hacia abajo
+                            # El único caso donde podemos usar un tamaño no múltiplo es cuando remaining_size < 1024
+                            if remaining_size < 1024 and remaining_size > 0:
+                                # Si remaining_size < 1024, Telegram permite usar el tamaño exacto
                                 valid_limit = int(remaining_size)
-                                print(f"⚠️ Muy cerca del final ({file_progress*100:.1f}%) con remaining_size={remaining_size} bytes (<=100KB), usando tamaño exacto: {valid_limit}", flush=True)
+                                print(f"⚠️ remaining_size < 1024, usando tamaño exacto: {valid_limit}", flush=True)
                             else:
                                 # Usar la función get_valid_limit con max_allowed=remaining_size
                                 # Esto asegura que el limit nunca exceda remaining_size y sea múltiplo de 1024

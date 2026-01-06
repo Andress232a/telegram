@@ -56,21 +56,35 @@ def get_valid_limit(requested_size, max_allowed=None):
     
     min_limit = 1024  # Mínimo válido (solo si no hay max_allowed < 1024)
     
-    # Redondear hacia arriba al múltiplo de 1024 más cercano
-    # Usar floor division para asegurar que siempre sea múltiplo de 1024
-    valid_limit = ((int(requested_size) + 1023) // 1024) * 1024
+    # 🚀 CRÍTICO: Redondear hacia ABAJO al múltiplo de 1024 más cercano
+    # Esto asegura que nunca exceda max_allowed si está definido
+    # Usar floor division para redondear hacia abajo
+    valid_limit = (int(requested_size) // 1024) * 1024
+    
+    # Si el resultado es 0 pero requested_size > 0, usar 1024 como mínimo
+    if valid_limit == 0 and requested_size > 0:
+        valid_limit = 1024
     
     # Asegurar que no exceda el máximo global (1MB)
     valid_limit = min(valid_limit, max_limit)
     
-    # Si max_allowed está definido, asegurar que no lo exceda
+    # 🚀 CRÍTICO: Si max_allowed está definido, asegurar que no lo exceda
+    # Y que siempre sea múltiplo de 1024 (excepto si max_allowed < 1024)
     if max_allowed is not None:
+        # Primero limitar a max_allowed
         valid_limit = min(valid_limit, max_allowed)
-        # Si después de limitar a max_allowed, el valor es menor que 1024 pero max_allowed >= 1024,
-        # redondear hacia abajo al múltiplo de 1024 más cercano
-        if valid_limit < 1024 and max_allowed >= 1024:
-            valid_limit = (max_allowed // 1024) * 1024
-            if valid_limit < 1024:
+        
+        # Si max_allowed >= 1024, asegurar que valid_limit sea múltiplo de 1024
+        if max_allowed >= 1024:
+            # Redondear hacia abajo al múltiplo de 1024 más cercano
+            valid_limit = (valid_limit // 1024) * 1024
+            # Si el resultado es 0, usar 1024 como mínimo
+            if valid_limit == 0:
+                valid_limit = 1024
+            # Asegurar que no exceda max_allowed después del redondeo
+            valid_limit = min(valid_limit, (max_allowed // 1024) * 1024)
+            # Si después de todo esto es 0, usar 1024 (pero solo si max_allowed >= 1024)
+            if valid_limit == 0 and max_allowed >= 1024:
                 valid_limit = 1024
     else:
         # Asegurar que sea al menos el mínimo válido (solo si no hay max_allowed)
@@ -2858,17 +2872,26 @@ def get_video(video_id):
                             # Esto asegura que el limit nunca exceda remaining_size
                             valid_limit = get_valid_limit(requested_limit, max_allowed=remaining_size)
                             
-                            # Verificación final: asegurar que nunca exceda remaining_size
+                            # 🚀 CRÍTICO: Verificación final - asegurar que nunca exceda remaining_size Y sea múltiplo de 1024
                             if valid_limit > remaining_size:
-                                print(f"⚠️ ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size}), usando remaining_size exacto", flush=True)
-                                # Si remaining_size es menor que 1024, usar exactamente remaining_size
+                                print(f"⚠️ ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size}), ajustando...", flush=True)
+                                # Si remaining_size es menor que 1024, usar exactamente remaining_size (Telegram lo permite)
                                 if remaining_size < 1024 and remaining_size > 0:
                                     valid_limit = remaining_size
                                 else:
-                                    # Redondear hacia abajo al múltiplo de 1024 más cercano
+                                    # CRÍTICO: Redondear hacia abajo al múltiplo de 1024 más cercano
+                                    # Esto asegura que siempre sea múltiplo de 1024
                                     valid_limit = (remaining_size // 1024) * 1024
-                                    if valid_limit < 1024 and remaining_size >= 1024:
+                                    # Si el resultado es 0 pero remaining_size >= 1024, usar 1024
+                                    if valid_limit == 0 and remaining_size >= 1024:
                                         valid_limit = 1024
+                            
+                            # 🚀 VERIFICACIÓN FINAL: Asegurar que valid_limit sea múltiplo de 1024 (excepto si remaining_size < 1024)
+                            if remaining_size >= 1024 and valid_limit % 1024 != 0:
+                                print(f"⚠️ CORRECCIÓN: valid_limit ({valid_limit}) no es múltiplo de 1024, redondeando hacia abajo...", flush=True)
+                                valid_limit = (valid_limit // 1024) * 1024
+                                if valid_limit == 0:
+                                    valid_limit = 1024
                             
                             print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}", flush=True)
                             result = await client(GetFileRequest(

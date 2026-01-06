@@ -2931,16 +2931,53 @@ def get_video(video_id):
                                     valid_limit = 1024
                                 print(f"🔧 Forzando valid_limit a: {valid_limit}", flush=True)
                             
-                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}", flush=True)
+                            # 🚀 VERIFICACIÓN ABSOLUTA FINAL ANTES DE ENVIAR - FORZAR CORRECCIÓN
+                            # Esta es la última oportunidad antes de enviar a Telegram
+                            if remaining_size >= 1024:
+                                # FORZAR a múltiplo de 1024
+                                valid_limit = (int(valid_limit) // 1024) * 1024
+                                # Asegurar que no exceda remaining_size
+                                if valid_limit > remaining_size:
+                                    valid_limit = (int(remaining_size) // 1024) * 1024
+                                # Si el resultado es 0, usar 1024 como mínimo
+                                if valid_limit == 0:
+                                    valid_limit = 1024
+                                # Verificar que no exceda remaining_size después de la corrección
+                                if valid_limit > remaining_size:
+                                    valid_limit = (int(remaining_size) // 1024) * 1024
+                                    if valid_limit == 0:
+                                        valid_limit = 1024
                             
-                            # Verificación final antes de enviar
-                            if remaining_size >= 1024 and valid_limit % 1024 != 0:
-                                raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) no es múltiplo de 1024. remaining_size={remaining_size}, valid_limit%1024={valid_limit % 1024}")
+                            # Verificación final absoluta
+                            if remaining_size >= 1024:
+                                if valid_limit % 1024 != 0:
+                                    print(f"❌ ERROR CRÍTICO: valid_limit ({valid_limit}) NO es múltiplo de 1024 después de todas las correcciones!", flush=True)
+                                    # Forzar corrección final
+                                    valid_limit = (int(remaining_size) // 1024) * 1024
+                                    if valid_limit == 0:
+                                        valid_limit = 1024
+                                    print(f"🔧 CORRECCIÓN FINAL FORZADA: valid_limit = {valid_limit}", flush=True)
+                                
+                                if valid_limit > remaining_size:
+                                    print(f"❌ ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size})!", flush=True)
+                                    valid_limit = (int(remaining_size) // 1024) * 1024
+                                    if valid_limit == 0:
+                                        valid_limit = 1024
+                                    print(f"🔧 CORRECCIÓN FINAL FORZADA: valid_limit = {valid_limit}", flush=True)
+                            
+                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}, valid_limit<=remaining_size={valid_limit <= remaining_size}", flush=True)
+                            
+                            # Verificación final antes de enviar - lanzar excepción si aún hay problemas
+                            if remaining_size >= 1024:
+                                if valid_limit % 1024 != 0:
+                                    raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) no es múltiplo de 1024. remaining_size={remaining_size}, valid_limit%1024={valid_limit % 1024}")
+                                if valid_limit > remaining_size:
+                                    raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size})")
                             
                             result = await client(GetFileRequest(
                                 location=file_location,
                                 offset=start,
-                                limit=valid_limit
+                                limit=int(valid_limit)  # Asegurar que sea int
                             ))
                             
                             # El resultado de GetFileRequest puede tener diferentes estructuras

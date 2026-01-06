@@ -71,31 +71,40 @@ def get_valid_limit(requested_size, max_allowed=None):
     # 🚀 CRÍTICO: Si max_allowed está definido, asegurar que no lo exceda
     # Y que siempre sea múltiplo de 1024 (excepto si max_allowed < 1024)
     if max_allowed is not None:
-        # Primero limitar a max_allowed
-        valid_limit = min(valid_limit, max_allowed)
-        
-        # Si max_allowed >= 1024, asegurar que valid_limit sea múltiplo de 1024
+        # Si max_allowed >= 1024, calcular el máximo múltiplo de 1024 que no exceda max_allowed
         if max_allowed >= 1024:
-            # Redondear hacia abajo al múltiplo de 1024 más cercano
+            # Calcular el máximo múltiplo de 1024 que cabe en max_allowed
+            max_valid = (max_allowed // 1024) * 1024
+            # Asegurar que valid_limit no exceda este máximo
+            valid_limit = min(valid_limit, max_valid)
+            # Redondear hacia abajo al múltiplo de 1024 más cercano (por si acaso)
             valid_limit = (valid_limit // 1024) * 1024
             # Si el resultado es 0, usar 1024 como mínimo
             if valid_limit == 0:
                 valid_limit = 1024
-            # Asegurar que no exceda max_allowed después del redondeo
-            valid_limit = min(valid_limit, (max_allowed // 1024) * 1024)
-            # Si después de todo esto es 0, usar 1024 (pero solo si max_allowed >= 1024)
-            if valid_limit == 0 and max_allowed >= 1024:
-                valid_limit = 1024
+        else:
+            # Si max_allowed < 1024, usar exactamente max_allowed (Telegram lo permite)
+            valid_limit = min(valid_limit, int(max_allowed))
     else:
         # Asegurar que sea al menos el mínimo válido (solo si no hay max_allowed)
         valid_limit = max(valid_limit, min_limit)
     
-    # Verificación final: asegurar que sea múltiplo de 1024 (excepto si max_allowed < 1024)
+    # 🚀 VERIFICACIÓN FINAL ABSOLUTA: Asegurar que sea múltiplo de 1024 (excepto si max_allowed < 1024)
+    # CRÍTICO: Siempre redondear hacia ABAJO para no exceder max_allowed
     if max_allowed is None or max_allowed >= 1024:
         if valid_limit % 1024 != 0:
-            valid_limit = ((valid_limit // 1024) + 1) * 1024
+            # Redondear hacia ABAJO al múltiplo de 1024 más cercano
+            valid_limit = (valid_limit // 1024) * 1024
+            # Si el resultado es 0, usar 1024 como mínimo
+            if valid_limit == 0:
+                valid_limit = 1024
+            # Si max_allowed está definido, asegurar que no lo exceda después del redondeo
             if max_allowed is not None:
-                valid_limit = min(valid_limit, max_allowed)
+                max_valid = (max_allowed // 1024) * 1024
+                valid_limit = min(valid_limit, max_valid)
+                if valid_limit == 0:
+                    valid_limit = 1024
+            # Asegurar que no exceda el máximo global
             valid_limit = min(valid_limit, max_limit)
     
     return int(valid_limit)

@@ -2879,25 +2879,39 @@ def get_video(video_id):
                             print(f"📥 Descargando rango: offset={valid_offset} (original={start}), tamaño={remaining_to_download} bytes, file_size={file_size}", flush=True)
                             
                             # Descargar en chunks de máximo 512KB hasta completar el rango solicitado
+                            # PERO limitar el tamaño total del buffer a MAX_HTTP_RESPONSE_SIZE (5MB)
                             while remaining_to_download > 0:
-                                # Calcular el tamaño del chunk actual (máximo 512KB)
-                                current_chunk_size = min(MAX_CHUNK_SIZE, remaining_to_download)
+                                # Verificar si el buffer ya alcanzó el límite máximo
+                                current_buffer_size = buffer.tell()
+                                if current_buffer_size >= MAX_HTTP_RESPONSE_SIZE:
+                                    print(f"⚠️ Buffer alcanzó límite máximo ({MAX_HTTP_RESPONSE_SIZE} bytes), deteniendo descarga. El navegador hará múltiples requests.", flush=True)
+                                    break
+                                
+                                # Calcular cuántos bytes podemos descargar sin exceder el límite
+                                bytes_available = MAX_HTTP_RESPONSE_SIZE - current_buffer_size
+                                
+                                # Calcular el tamaño del chunk actual (máximo 512KB, pero sin exceder el límite total)
+                                current_chunk_size = min(MAX_CHUNK_SIZE, remaining_to_download, bytes_available)
+                                
+                                # Si no hay espacio disponible, detener
+                                if current_chunk_size <= 0:
+                                    break
                                 
                                 # Asegurar que sea múltiplo de 1024 (excepto si es el último pedazo y es menor que 1024)
                                 remaining_in_file = file_size - current_offset
                                 
                                 # Si estamos cerca del final del archivo y el tamaño restante es menor que 1024
                                 if remaining_in_file < 1024 and remaining_in_file > 0:
-                                    # Usar el tamaño exacto restante
-                                    current_chunk_size = int(remaining_in_file)
+                                    # Usar el tamaño exacto restante (pero sin exceder bytes_available)
+                                    current_chunk_size = min(int(remaining_in_file), bytes_available)
                                 elif current_chunk_size >= 1024:
                                     # Redondear hacia abajo al múltiplo de 1024 más cercano
                                     current_chunk_size = (int(current_chunk_size) // 1024) * 1024
                                     if current_chunk_size == 0:
-                                        current_chunk_size = 1024
+                                        current_chunk_size = 1024 if bytes_available >= 1024 else int(bytes_available)
                                 else:
-                                    # Si es menor que 1024 pero no es el final, usar 1024
-                                    current_chunk_size = 1024
+                                    # Si es menor que 1024 pero no es el final, usar 1024 si hay espacio
+                                    current_chunk_size = 1024 if bytes_available >= 1024 else int(bytes_available)
                                 
                                 # Asegurar que no exceda el tamaño del archivo
                                 if current_chunk_size > remaining_in_file:

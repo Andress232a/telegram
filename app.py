@@ -2888,15 +2888,18 @@ def get_video(video_id):
                             
                             valid_limit = int(valid_limit)
                             
-                            # Log mínimo solo en caso de error
-                            if valid_limit % 1024 != 0 or valid_limit > remaining_size or valid_limit > max_limit:
-                                print(f"ERROR: limit={valid_limit}, remaining={remaining_size}, max={max_limit}, %1024={valid_limit % 1024}", flush=True)
+                            # Log antes de enviar para debug
+                            print(f"GetFileRequest: offset={start}, limit={valid_limit}, remaining={remaining_size}, max={max_limit}, limit%1024={valid_limit % 1024}, offset%1024={start % 1024}", flush=True)
                             
-                            result = await client(GetFileRequest(
-                                location=file_location,
-                                offset=start,
-                                limit=valid_limit
-                            ))
+                            try:
+                                result = await client(GetFileRequest(
+                                    location=file_location,
+                                    offset=start,
+                                    limit=valid_limit
+                                ))
+                            except Exception as get_file_error:
+                                print(f"ERROR GetFileRequest: offset={start}, limit={valid_limit}, remaining={remaining_size}, error={type(get_file_error).__name__}: {str(get_file_error)}", flush=True)
+                                raise
                             
                             # El resultado de GetFileRequest puede tener diferentes estructuras
                             # Intentamos obtener los bytes de diferentes maneras

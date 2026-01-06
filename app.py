@@ -2901,54 +2901,35 @@ def get_video(video_id):
                                     print(f"⚠️ No hay más bytes en el archivo desde offset {current_offset}", flush=True)
                                     break
                                 
-                                # Calcular el limit de forma SIMPLE y SEGURA
-                                # Regla: Si remaining_in_file >= 524288, usar 524288 (512KB)
-                                # Si remaining_in_file < 524288 pero >= 1024, usar el múltiplo de 1024 más cercano hacia abajo
-                                # Si remaining_in_file < 1024, usar el tamaño exacto
-                                if remaining_in_file >= MAX_CHUNK_SIZE:
-                                    final_limit = MAX_CHUNK_SIZE  # 524288 bytes = múltiplo de 1024
-                                elif remaining_in_file >= 1024:
-                                    # Redondear hacia abajo al múltiplo de 1024 más cercano
-                                    final_limit = (int(remaining_in_file) // 1024) * 1024
-                                else:
-                                    # Si es menor que 1024, usar el tamaño exacto
-                                    final_limit = int(remaining_in_file)
+                                # SOLUCIÓN ULTRA SIMPLE: Calcular limit basado SOLO en remaining_in_file
+                                # Luego limitarlo por remaining_to_download y bytes_available
+                                bytes_available = MAX_HTTP_RESPONSE_SIZE - current_buffer_size
                                 
-                                # Verificación final: asegurar que limit no exceda remaining_in_file
+                                # Paso 1: Calcular el limit ideal basado en remaining_in_file
+                                if remaining_in_file >= MAX_CHUNK_SIZE:
+                                    ideal_limit = MAX_CHUNK_SIZE  # 524288 bytes
+                                elif remaining_in_file >= 1024:
+                                    ideal_limit = (int(remaining_in_file) // 1024) * 1024  # Múltiplo de 1024
+                                else:
+                                    ideal_limit = int(remaining_in_file)  # Tamaño exacto si < 1024
+                                
+                                # Paso 2: Limitar por remaining_to_download y bytes_available
+                                final_limit = min(ideal_limit, remaining_to_download, bytes_available)
+                                
+                                # Paso 3: Asegurar que final_limit sea múltiplo de 1024 (excepto si es < 1024)
+                                if final_limit >= 1024:
+                                    final_limit = (int(final_limit) // 1024) * 1024
+                                
+                                # Paso 4: Asegurar que final_limit nunca exceda remaining_in_file
                                 if final_limit > remaining_in_file:
                                     if remaining_in_file < 1024:
                                         final_limit = int(remaining_in_file)
                                     else:
                                         final_limit = (int(remaining_in_file) // 1024) * 1024
                                 
-                                # Verificación final: asegurar que limit sea múltiplo de 1024 (excepto si es < 1024)
-                                if final_limit >= 1024 and (final_limit % 1024) != 0:
-                                    final_limit = (int(final_limit) // 1024) * 1024
-                                
-                                # Si final_limit es 0, no podemos descargar más
+                                # Paso 5: Si final_limit es 0, no podemos descargar más
                                 if final_limit <= 0:
                                     print(f"⚠️ final_limit es 0, terminando descarga", flush=True)
-                                    break
-                                
-                                # Verificación final absoluta: limit nunca debe exceder remaining_in_file
-                                if final_limit > remaining_in_file:
-                                    final_limit = int(remaining_in_file) if remaining_in_file < 1024 else ((int(remaining_in_file) // 1024) * 1024)
-                                
-                                # Limitar también por remaining_to_download y bytes_available
-                                bytes_available = MAX_HTTP_RESPONSE_SIZE - current_buffer_size
-                                final_limit = min(final_limit, remaining_to_download, bytes_available, remaining_in_file)
-                                
-                                # Asegurar que final_limit sea múltiplo de 1024 (excepto si es < 1024)
-                                if final_limit >= 1024:
-                                    final_limit = (int(final_limit) // 1024) * 1024
-                                    if final_limit == 0 and remaining_in_file >= 1024:
-                                        final_limit = 1024
-                                
-                                # Verificación final: limit nunca debe exceder remaining_in_file
-                                if final_limit > remaining_in_file:
-                                    final_limit = int(remaining_in_file) if remaining_in_file < 1024 else ((int(remaining_in_file) // 1024) * 1024)
-                                
-                                if final_limit <= 0:
                                     break
                                 
                                 print(f"🔍 GetFileRequest: offset={current_offset}, limit={final_limit}, remaining_to_download={remaining_to_download}, remaining_in_file={remaining_in_file}, offset%1024={current_offset % 1024}, limit%1024={final_limit % 1024}", flush=True)

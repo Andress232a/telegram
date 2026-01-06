@@ -2033,6 +2033,7 @@ def upload_video():
         # CRÍTICO: Devolver respuesta INMEDIATAMENTE para que el frontend pueda consultar progreso
         print(f"📤 [UPLOAD] Devolviendo respuesta INMEDIATA con upload_id: {upload_id}", flush=True)
         print(f"📋 [UPLOAD] Upload IDs disponibles: {list(upload_progress.keys())}", flush=True)
+        print(f"📋 [UPLOAD] Estado inicial del progreso: {upload_progress[upload_id]}", flush=True)
         
         # Iniciar guardado en thread separado
         import threading as threading_module
@@ -2040,11 +2041,21 @@ def upload_video():
         def save_file_with_progress_monitoring():
             try:
                 print(f"💾 [SAVE-BG] Iniciando guardado de archivo grande...", flush=True)
+                print(f"💾 [SAVE-BG] Ruta destino: {local_path}", flush=True)
+                print(f"💾 [SAVE-BG] Tamaño esperado: {file_size_from_request} bytes ({file_size_from_request / (1024*1024):.2f} MB)" if file_size_from_request else "💾 [SAVE-BG] Tamaño desconocido", flush=True)
+                
+                # Actualizar progreso inmediatamente para indicar que empezó
+                upload_progress[upload_id]['status'] = 'saving'
+                upload_progress[upload_id]['message'] = 'Guardando archivo... 0%'
+                upload_progress[upload_id]['progress'] = 0
+                print(f"💾 [SAVE-BG] Progreso inicializado: {upload_progress[upload_id]}", flush=True)
                 
                 # Usar file.save() que es eficiente para archivos grandes
                 # Flask/Werkzeug maneja el streaming internamente
                 file.seek(0)
+                print(f"💾 [SAVE-BG] Llamando file.save()...", flush=True)
                 file.save(local_path)
+                print(f"💾 [SAVE-BG] file.save() completado", flush=True)
                 
                 actual_file_size = os.path.getsize(local_path)
                 print(f"✅ [SAVE-BG] Archivo guardado completamente: {local_path} ({actual_file_size} bytes, {actual_file_size / (1024*1024*1024):.2f} GB)", flush=True)
@@ -2054,6 +2065,7 @@ def upload_video():
                 upload_progress[upload_id]['status'] = 'saved'
                 upload_progress[upload_id]['message'] = 'Archivo guardado, iniciando subida a Telegram...'
                 upload_progress[upload_id]['progress'] = 30
+                print(f"✅ [SAVE-BG] Progreso actualizado a 30%: {upload_progress[upload_id]}", flush=True)
                 
                 # Iniciar subida a Telegram
                 print(f"📤 [SAVE-BG] Iniciando subida a Telegram...", flush=True)
@@ -2072,60 +2084,83 @@ def upload_video():
                 if upload_id in upload_progress:
                     upload_progress[upload_id]['status'] = 'error'
                     upload_progress[upload_id]['error'] = error_msg
+                    print(f"❌ [SAVE-BG] Estado de error guardado: {upload_progress[upload_id]}", flush=True)
         
         def monitor_file_size():
             """Monitorear el tamaño del archivo mientras se guarda y actualizar progreso"""
+            print(f"👁️ [MONITOR] Iniciando monitoreo de archivo: {local_path}", flush=True)
             last_size = 0
             last_progress = -1
             max_wait = 3600  # Máximo 1 hora esperando
             waited = 0
-            check_interval = 0.2  # Verificar cada 200ms para actualización rápida
+            check_interval = 0.1  # Verificar cada 100ms para actualización más rápida
+            no_progress_count = 0  # Contador de veces sin progreso
             
             while waited < max_wait:
-                if os.path.exists(local_path):
-                    current_size = os.path.getsize(local_path)
-                    
-                    if current_size != last_size:
-                        # Archivo está creciendo, actualizar progreso
-                        if file_size_from_request and file_size_from_request > 0:
-                            save_progress = min(30, int((current_size / file_size_from_request) * 30))
+                try:
+                    if os.path.exists(local_path):
+                        current_size = os.path.getsize(local_path)
+                        
+                        if current_size != last_size:
+                            # Archivo está creciendo, actualizar progreso
+                            no_progress_count = 0  # Resetear contador
                             
-                            # Actualizar solo si cambió significativamente (cada 0.5%)
-                            if save_progress != last_progress:
+                            if file_size_from_request and file_size_from_request > 0:
+                                save_progress = min(30, int((current_size / file_size_from_request) * 30))
+                                
+                                # Actualizar siempre que cambie el tamaño, no solo el progreso
                                 upload_progress[upload_id]['progress'] = save_progress
                                 upload_progress[upload_id]['current'] = current_size
                                 upload_progress[upload_id]['total'] = file_size_from_request
                                 upload_progress[upload_id]['status'] = 'saving'
                                 upload_progress[upload_id]['message'] = f'Guardando archivo... {save_progress}%'
                                 
-                                # Loggear cada 1%
-                                if save_progress % 1 == 0 or save_progress == 30:
+                                # Loggear cada vez que cambie el progreso
+                                if save_progress != last_progress:
                                     mb_saved = current_size / (1024 * 1024)
                                     mb_total = file_size_from_request / (1024 * 1024)
                                     print(f"💾 [MONITOR] Guardando: {save_progress}% ({mb_saved:.1f}MB/{mb_total:.1f}MB)", flush=True)
-                                
-                                last_progress = save_progress
+                                    last_progress = save_progress
+                            else:
+                                mb_saved = current_size / (1024 * 1024)
+                                upload_progress[upload_id]['progress'] = min(30, int((current_size / (4 * 1024 * 1024 * 1024)) * 30))  # Estimar basado en 4GB
+                                upload_progress[upload_id]['current'] = current_size
+                                upload_progress[upload_id]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
+                                if int(mb_saved) % 10 == 0:  # Loggear cada 10MB
+                                    print(f"💾 [MONITOR] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
+                            
+                            last_size = current_size
+                            
+                            # Si el archivo dejó de crecer y tenemos el tamaño completo, salir
+                            if file_size_from_request and current_size >= file_size_from_request:
+                                print(f"✅ [MONITOR] Archivo completado: {current_size} bytes", flush=True)
+                                break
                         else:
-                            mb_saved = current_size / (1024 * 1024)
-                            upload_progress[upload_id]['current'] = current_size
-                            upload_progress[upload_id]['message'] = f'Guardando archivo... ({mb_saved:.1f}MB)'
-                            if int(mb_saved) % 50 == 0:
-                                print(f"💾 [MONITOR] Guardando: {mb_saved:.1f}MB guardados...", flush=True)
-                        
-                        last_size = current_size
-                        
-                        # Si el archivo dejó de crecer y tenemos el tamaño completo, salir
-                        if file_size_from_request and current_size >= file_size_from_request:
-                            print(f"✅ [MONITOR] Archivo completado: {current_size} bytes", flush=True)
-                            break
+                            # Archivo no está creciendo
+                            no_progress_count += 1
+                            
+                            # Si no hay progreso por más de 5 segundos, verificar si terminó
+                            if no_progress_count * check_interval >= 5:
+                                if upload_progress[upload_id].get('status') != 'saving':
+                                    # El guardado terminó
+                                    print(f"✅ [MONITOR] Guardado completado (status cambió)", flush=True)
+                                    break
                     else:
-                        # Archivo no está creciendo, verificar si terminó
-                        if upload_progress[upload_id].get('status') != 'saving':
-                            # El guardado terminó
-                            break
-                else:
-                    # Archivo aún no existe, esperar un poco más
-                    pass
+                        # Archivo aún no existe
+                        no_progress_count += 1
+                        if no_progress_count == 1:
+                            print(f"👁️ [MONITOR] Esperando que el archivo se cree...", flush=True)
+                        
+                        # Si el archivo no existe después de 10 segundos, puede haber un problema
+                        if no_progress_count * check_interval >= 10:
+                            print(f"⚠️ [MONITOR] Archivo aún no existe después de 10 segundos", flush=True)
+                            # Verificar si hay un error
+                            if upload_progress[upload_id].get('status') == 'error':
+                                print(f"❌ [MONITOR] Error detectado, deteniendo monitoreo", flush=True)
+                                break
+                
+                except Exception as monitor_error:
+                    print(f"❌ [MONITOR] Error monitoreando archivo: {monitor_error}", flush=True)
                 
                 time.sleep(check_interval)
                 waited += check_interval
@@ -2138,6 +2173,7 @@ def upload_video():
         monitor_thread.start()
         
         print(f"🧵 [UPLOAD] Threads iniciados: guardado y monitoreo", flush=True)
+        print(f"📋 [UPLOAD] Estado del progreso después de iniciar threads: {upload_progress[upload_id]}", flush=True)
     
     else:
         # Para archivos pequeños, usar buffer en memoria (más rápido)

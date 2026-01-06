@@ -2848,10 +2848,14 @@ def get_video(video_id):
                         
                         # Descargar SOLO el rango solicitado usando GetFileRequest
                         # SOLUCIÓN SIMPLE: Usar siempre chunks de 512KB (múltiplo de 1024 garantizado)
-                        # Dividir el rango en múltiples requests de 512KB si es necesario
+                        # LIMITAR el tamaño máximo a descargar para evitar timeouts
                         try:
                             # Usar siempre 512KB por chunk (524288 bytes = múltiplo de 1024)
                             CHUNK_SIZE_SAFE = 512 * 1024  # 512KB - siempre múltiplo de 1024
+                            
+                            # LIMITAR el tamaño máximo a descargar por request (5MB máximo)
+                            # Esto evita que el código intente descargar rangos muy grandes que causan timeouts
+                            MAX_DOWNLOAD_SIZE = 5 * 1024 * 1024  # 5MB máximo por request
                             
                             # Asegurar que offset sea múltiplo de 1024
                             valid_offset = (int(start) // 1024) * 1024
@@ -2861,6 +2865,11 @@ def get_video(video_id):
                             if valid_offset != start:
                                 # Si el offset cambió, ajustar el tamaño a descargar
                                 remaining_to_download = chunk_size + (start - valid_offset)
+                            
+                            # LIMITAR el tamaño máximo a descargar
+                            if remaining_to_download > MAX_DOWNLOAD_SIZE:
+                                remaining_to_download = MAX_DOWNLOAD_SIZE
+                                print(f"⚠️ Rango solicitado ({chunk_size} bytes) excede máximo ({MAX_DOWNLOAD_SIZE} bytes), limitando a {MAX_DOWNLOAD_SIZE} bytes", flush=True)
                             
                             buffer = BytesIO()
                             current_offset = valid_offset

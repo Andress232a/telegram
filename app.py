@@ -2847,98 +2847,77 @@ def get_video(video_id):
                                 print(f"⚠️ Error actualizando file_reference en range: {ref_error}")
                         
                         # Descargar SOLO el rango solicitado usando GetFileRequest
-                        # REFACTORIZADO: Dividir cualquier rango en múltiples GetFileRequest de máximo 512KB
-                        # NUNCA enviar un limit mayor a 524288 bytes (512KB)
-                        # LIMITAR el tamaño máximo por request HTTP para evitar descargas excesivas
+                        # SOLUCIÓN SIMPLE: Usar offset exacto del Range HTTP, calcular limit como min(512KB, end - offset)
+                        # Avanzar offset por bytes reales descargados, bucle depende solo de offset < end
                         try:
                             # Límite máximo absoluto para GetFileRequest (512KB = 524288 bytes)
-                            MAX_CHUNK_SIZE = 512 * 1024  # 512KB - NUNCA exceder este valor
+                            MAX_CHUNK_SIZE = 512 * 1024  # 512KB
                             
                             # Límite máximo por request HTTP (5MB) - el navegador hará múltiples requests
-                            MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB máximo por respuesta HTTP
+                            MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB
                             
-                            # Asegurar que offset sea múltiplo de 1024
-                            valid_offset = (int(start) // 1024) * 1024
+                            # Calcular el rango exacto solicitado
+                            end = start + chunk_size
                             
-                            # Calcular cuántos bytes necesitamos descargar
-                            remaining_to_download = chunk_size
-                            if valid_offset != start:
-                                # Si el offset cambió, ajustar el tamaño a descargar
-                                remaining_to_download = chunk_size + (start - valid_offset)
-                            
-                            # LIMITAR el tamaño máximo a descargar por request HTTP
-                            # Esto evita que el código intente descargar rangos enormes que causan timeouts
-                            if remaining_to_download > MAX_HTTP_RESPONSE_SIZE:
-                                remaining_to_download = MAX_HTTP_RESPONSE_SIZE
+                            # Limitar el tamaño máximo a descargar por request HTTP
+                            if chunk_size > MAX_HTTP_RESPONSE_SIZE:
+                                end = start + MAX_HTTP_RESPONSE_SIZE
                                 print(f"⚠️ Rango solicitado ({chunk_size} bytes) excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
                             
                             buffer = BytesIO()
-                            current_offset = valid_offset
+                            current_offset = start  # Usar offset exacto, sin redondear
                             chunks_downloaded = 0
                             
-                            print(f"📥 Descargando rango: offset={valid_offset} (original={start}), tamaño={remaining_to_download} bytes, file_size={file_size}", flush=True)
+                            print(f"📥 Descargando rango: start={start}, end={end}, chunk_size={end - start}, file_size={file_size}", flush=True)
                             
-                            # SOLUCIÓN SIMPLE Y ROBUSTA: Usar siempre chunks de 512KB (múltiplo de 1024 garantizado)
-                            # Asegurar que offset SIEMPRE sea múltiplo de 1024
-                            # Calcular limit basado SOLO en remaining_in_file
-                            while remaining_to_download > 0:
+                            # Bucle simple: mientras offset < end
+                            while current_offset < end:
                                 # Verificar si el buffer ya alcanzó el límite máximo
                                 current_buffer_size = buffer.tell()
                                 if current_buffer_size >= MAX_HTTP_RESPONSE_SIZE:
                                     print(f"⚠️ Buffer alcanzó límite máximo ({MAX_HTTP_RESPONSE_SIZE} bytes), deteniendo descarga. El navegador hará múltiples requests.", flush=True)
                                     break
                                 
-                                # Asegurar que current_offset SIEMPRE sea múltiplo de 1024
-                                if current_offset % 1024 != 0:
-                                    current_offset = (int(current_offset) // 1024) * 1024
-                                    print(f"⚠️ Ajustando offset a múltiplo de 1024: {current_offset}", flush=True)
+                                # Calcular cuántos bytes quedan por descargar en este rango
+                                remaining_in_range = end - current_offset
                                 
-                                # Calcular cuántos bytes quedan en el archivo desde current_offset
-                                remaining_in_file = file_size - current_offset
-                                
-                                # Si no hay más bytes en el archivo, terminar
-                                if remaining_in_file <= 0:
-                                    print(f"⚠️ No hay más bytes en el archivo desde offset {current_offset}", flush=True)
-                                    break
-                                
-                                # SOLUCIÓN ULTRA SIMPLE: Calcular limit basado SOLO en remaining_in_file
-                                # Luego limitarlo por remaining_to_download y bytes_available
-                                bytes_available = MAX_HTTP_RESPONSE_SIZE - current_buffer_size
-                                
-                                # Paso 1: Calcular el limit ideal basado en remaining_in_file
-                                if remaining_in_file >= MAX_CHUNK_SIZE:
-                                    ideal_limit = MAX_CHUNK_SIZE  # 524288 bytes
-                                elif remaining_in_file >= 1024:
-                                    ideal_limit = (int(remaining_in_file) // 1024) * 1024  # Múltiplo de 1024
+                                # Calcular limit como min(512KB, remaining_in_range)
+                                # Pero asegurándonos de que sea múltiplo de 1024 (excepto si es < 1024)
+                                if remaining_in_range >= MAX_CHUNK_SIZE:
+                                    limit = MAX_CHUNK_SIZE  # 524288 bytes (múltiplo de 1024)
+                                elif remaining_in_range >= 1024:
+                                    # Redondear hacia abajo al múltiplo de 1024 más cercano
+                                    limit = (int(remaining_in_range) // 1024) * 1024
                                 else:
-                                    ideal_limit = int(remaining_in_file)  # Tamaño exacto si < 1024
+                                    # Si es menor que 1024, usar el tamaño exacto
+                                    limit = int(remaining_in_range)
                                 
-                                # Paso 2: Limitar por remaining_to_download y bytes_available
-                                final_limit = min(ideal_limit, remaining_to_download, bytes_available)
-                                
-                                # Paso 3: Asegurar que final_limit sea múltiplo de 1024 (excepto si es < 1024)
-                                if final_limit >= 1024:
-                                    final_limit = (int(final_limit) // 1024) * 1024
-                                
-                                # Paso 4: Asegurar que final_limit nunca exceda remaining_in_file
-                                if final_limit > remaining_in_file:
-                                    if remaining_in_file < 1024:
-                                        final_limit = int(remaining_in_file)
-                                    else:
-                                        final_limit = (int(remaining_in_file) // 1024) * 1024
-                                
-                                # Paso 5: Si final_limit es 0, no podemos descargar más
-                                if final_limit <= 0:
-                                    print(f"⚠️ final_limit es 0, terminando descarga", flush=True)
+                                # Asegurar que limit no sea 0
+                                if limit <= 0:
                                     break
                                 
-                                print(f"🔍 GetFileRequest: offset={current_offset}, limit={final_limit}, remaining_to_download={remaining_to_download}, remaining_in_file={remaining_in_file}, offset%1024={current_offset % 1024}, limit%1024={final_limit % 1024}", flush=True)
+                                # Asegurar que limit no exceda remaining_in_range
+                                if limit > remaining_in_range:
+                                    limit = int(remaining_in_range)
+                                
+                                # Asegurar que limit sea múltiplo de 1024 si es >= 1024
+                                if limit >= 1024 and (limit % 1024) != 0:
+                                    limit = (int(limit) // 1024) * 1024
+                                
+                                # Verificación final: limit nunca debe exceder remaining_in_range
+                                if limit > remaining_in_range:
+                                    limit = int(remaining_in_range) if remaining_in_range < 1024 else ((int(remaining_in_range) // 1024) * 1024)
+                                
+                                if limit <= 0:
+                                    break
+                                
+                                print(f"🔍 GetFileRequest: offset={current_offset}, limit={limit}, remaining_in_range={remaining_in_range}, end={end}, offset%1024={current_offset % 1024}, limit%1024={limit % 1024}", flush=True)
                                 
                                 try:
                                     result = await client(GetFileRequest(
                                         location=file_location,
                                         offset=current_offset,
-                                        limit=final_limit
+                                        limit=limit
                                     ))
                                     
                                     # Extraer los bytes del resultado con logging detallado
@@ -2960,30 +2939,32 @@ def get_video(video_id):
                                     
                                     if chunk_data and len(chunk_data) > 0:
                                         buffer.write(chunk_data)
+                                        # Avanzar offset por la cantidad real de bytes descargados
                                         current_offset += len(chunk_data)
-                                        remaining_to_download -= len(chunk_data)
                                         chunks_downloaded += 1
-                                        print(f"📊 Chunk {chunks_downloaded}: {len(chunk_data)} bytes descargados, {buffer.tell()} bytes en buffer, {remaining_to_download} bytes restantes", flush=True)
+                                        remaining_in_range = end - current_offset
+                                        print(f"📊 Chunk {chunks_downloaded}: {len(chunk_data)} bytes descargados, {buffer.tell()} bytes en buffer, offset ahora={current_offset}, remaining_in_range={remaining_in_range}", flush=True)
                                     else:
-                                        print(f"⚠️ Chunk vacío en offset {current_offset}, limit={final_limit}, terminando descarga", flush=True)
+                                        print(f"⚠️ Chunk vacío en offset {current_offset}, limit={limit}, terminando descarga", flush=True)
                                         break
                                 except Exception as chunk_error:
                                     error_type = type(chunk_error).__name__
                                     error_msg = str(chunk_error)
-                                    print(f"❌ Error en GetFileRequest: offset={current_offset}, limit={final_limit}, error={error_type}: {error_msg}", flush=True)
+                                    print(f"❌ Error en GetFileRequest: offset={current_offset}, limit={limit}, error={error_type}: {error_msg}", flush=True)
                                     
                                     # Si es un error de limit, intentar con un chunk más pequeño
                                     if 'limit' in error_msg.lower() or 'LimitInvalid' in error_type:
-                                        # Calcular un limit más pequeño que sea múltiplo de 1024 y no exceda remaining_in_file
-                                        retry_limit = min(1024, remaining_in_file)
+                                        remaining_in_range = end - current_offset
+                                        # Calcular un limit más pequeño que sea múltiplo de 1024 y no exceda remaining_in_range
+                                        retry_limit = min(1024, remaining_in_range)
                                         if retry_limit >= 1024:
                                             retry_limit = (int(retry_limit) // 1024) * 1024
                                         else:
                                             retry_limit = int(retry_limit) if retry_limit > 0 else 0
                                         
-                                        if retry_limit > 0 and retry_limit <= remaining_in_file:
+                                        if retry_limit > 0 and retry_limit <= remaining_in_range:
                                             try:
-                                                print(f"🔄 Reintentando con limit más pequeño: {retry_limit} (remaining_in_file={remaining_in_file}, offset={current_offset})", flush=True)
+                                                print(f"🔄 Reintentando con limit más pequeño: {retry_limit} (remaining_in_range={remaining_in_range}, offset={current_offset})", flush=True)
                                                 result = await client(GetFileRequest(
                                                     location=file_location,
                                                     offset=current_offset,
@@ -2997,12 +2978,12 @@ def get_video(video_id):
                                                 elif isinstance(result, bytes):
                                                     chunk_data = result
                                                 elif hasattr(result, '__bytes__'):
-                                                        chunk_data = bytes(result)
+                                                    chunk_data = bytes(result)
                                                 
                                                 if chunk_data and len(chunk_data) > 0:
                                                     buffer.write(chunk_data)
+                                                    # Avanzar offset por la cantidad real de bytes descargados
                                                     current_offset += len(chunk_data)
-                                                    remaining_to_download -= len(chunk_data)
                                                     chunks_downloaded += 1
                                                     print(f"✅ Reintento exitoso: {len(chunk_data)} bytes descargados", flush=True)
                                                     continue
@@ -3014,18 +2995,11 @@ def get_video(video_id):
                             
                             # Devolver los datos descargados
                             total_downloaded = buffer.tell()
-                            print(f"✅ Descarga completada: {chunks_downloaded} chunks, {total_downloaded} bytes totales", flush=True)
+                            print(f"✅ Descarga completada: {chunks_downloaded} chunks, {total_downloaded} bytes totales, offset final={current_offset}", flush=True)
                             
                             if total_downloaded > 0:
                                 buffer.seek(0)
                                 data = buffer.read()
-                                
-                                # Si el offset original era diferente, ajustar los datos
-                                if valid_offset != start:
-                                    skip_bytes = start - valid_offset
-                                    if skip_bytes > 0 and skip_bytes < len(data):
-                                        data = data[skip_bytes:]
-                                        print(f"🔧 Ajustando datos: saltando {skip_bytes} bytes, tamaño final: {len(data)} bytes", flush=True)
                                 
                                 # Limitar al tamaño solicitado
                                 if len(data) > chunk_size:

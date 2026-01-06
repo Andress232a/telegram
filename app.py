@@ -2888,17 +2888,31 @@ def get_video(video_id):
                             
                             valid_limit = int(valid_limit)
                             
+                            # Asegurar que offset también sea múltiplo de 1024 (Telegram lo requiere)
+                            valid_offset = (int(start) // 1024) * 1024
+                            
+                            # Ajustar remaining_size si el offset cambió
+                            if valid_offset != start:
+                                remaining_size = file_size - valid_offset
+                                # Recalcular limit si es necesario
+                                if valid_limit > remaining_size:
+                                    valid_limit = (int(remaining_size) // 1024) * 1024
+                                    if valid_limit == 0 and remaining_size >= 1024:
+                                        valid_limit = 1024
+                                    elif valid_limit == 0:
+                                        valid_limit = int(remaining_size)
+                            
                             # Log antes de enviar para debug
-                            print(f"GetFileRequest: offset={start}, limit={valid_limit}, remaining={remaining_size}, max={max_limit}, limit%1024={valid_limit % 1024}, offset%1024={start % 1024}", flush=True)
+                            print(f"GetFileRequest: offset={valid_offset} (original={start}), limit={valid_limit}, remaining={remaining_size}, max={max_limit}, limit%1024={valid_limit % 1024}, offset%1024={valid_offset % 1024}", flush=True)
                             
                             try:
                                 result = await client(GetFileRequest(
                                     location=file_location,
-                                    offset=start,
+                                    offset=valid_offset,
                                     limit=valid_limit
                                 ))
                             except Exception as get_file_error:
-                                print(f"ERROR GetFileRequest: offset={start}, limit={valid_limit}, remaining={remaining_size}, error={type(get_file_error).__name__}: {str(get_file_error)}", flush=True)
+                                print(f"ERROR GetFileRequest: offset={valid_offset} (original={start}), limit={valid_limit}, remaining={remaining_size}, error={type(get_file_error).__name__}: {str(get_file_error)}", flush=True)
                                 raise
                             
                             # El resultado de GetFileRequest puede tener diferentes estructuras

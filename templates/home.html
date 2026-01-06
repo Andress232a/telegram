@@ -700,17 +700,23 @@
             <div class="empty-state">
                 <div class="empty-state-icon">💬</div>
                 <p>Selecciona un chat para comenzar</p>
+                <p style="font-size: 0.85em; color: #888; margin-top: 10px;">
+                    💡 <strong>Nota:</strong> Los videos se suben desde la app de Telegram.<br>
+                    Esta aplicación web solo muestra y reproduce los videos que ya están en Telegram.
+                </p>
             </div>
         </div>
         
         <div class="input-area" id="inputArea" style="display: none;">
-            <input type="file" id="videoInput" accept="video/*">
-            <button class="upload-btn" onclick="document.getElementById('videoInput').click()">📎</button>
+            <!-- Subida de videos deshabilitada - Los videos se suben desde la app de Telegram -->
+            <input type="file" id="videoInput" accept="video/*" style="display: none;">
+            <!-- <button class="upload-btn" onclick="document.getElementById('videoInput').click()">📎</button> -->
             <input type="text" class="message-input" id="messageInput" placeholder="Escribe un mensaje...">
             <button class="send-btn" id="sendBtn">➤</button>
         </div>
         
-        <button class="upload-video-btn" id="uploadVideoBtn" title="Subir video" style="display: none;">📹</button>
+        <!-- Botón de subida deshabilitado - Los videos se suben desde la app de Telegram -->
+        <button class="upload-video-btn" id="uploadVideoBtn" title="Subir video desde la app de Telegram" style="display: none;">📹</button>
         
         <!-- Modal para agregar descripción al video -->
         <div class="video-upload-modal" id="videoUploadModal" style="display: none;">
@@ -959,7 +965,8 @@
             document.getElementById('chatHeaderName').textContent = chatName;
             document.getElementById('chatHeaderAvatar').textContent = chatName.charAt(0).toUpperCase();
             document.getElementById('inputArea').style.display = 'flex';
-            document.getElementById('uploadVideoBtn').style.display = 'block';
+            // Botón de subida deshabilitado - Los videos se suben desde la app de Telegram
+            // document.getElementById('uploadVideoBtn').style.display = 'block';
             document.getElementById('messagesArea').innerHTML = '<div class="loading">Cargando mensajes...</div>';
             
             // Cargar mensajes
@@ -1540,6 +1547,9 @@
             return null;
         }
         
+        // FUNCIONALIDAD DE SUBIDA DESHABILITADA
+        // Los videos se suben desde la app de Telegram, la web solo los muestra
+        /*
         // Función para mostrar el modal de subida de video
         function showVideoUploadModal(file) {
             if (!file) {
@@ -1629,8 +1639,9 @@
             // Mostrar el modal
             document.getElementById('videoUploadModal').style.display = 'flex';
         }
+        */
         
-        // Función para cerrar el modal
+        // Función para cerrar el modal (mantenida por si se necesita)
         function closeVideoUploadModal() {
             document.getElementById('videoUploadModal').style.display = 'none';
             selectedVideoFile = null;
@@ -1638,6 +1649,8 @@
             document.getElementById('videoInput').value = '';
         }
         
+        // FUNCIONALIDAD DE SUBIDA DESHABILITADA
+        /*
         // Función para confirmar y subir el video
         async function confirmVideoUpload() {
             if (!selectedVideoFile) {
@@ -1686,7 +1699,10 @@
             // Subir el video - pasar el archivo y chatId explícitamente
             await uploadVideo(fileToUpload, description, chatIdToPass);
         }
+        */
         
+        // FUNCIONALIDAD DE SUBIDA DESHABILITADA
+        /*
         // Función para subir video
         async function uploadVideo(file, description = '', chatIdParam = null) {
             console.log('🚀 [uploadVideo] Iniciando subida. file:', file, 'currentChatId:', currentChatId, 'chatIdParam:', chatIdParam);
@@ -1793,8 +1809,11 @@
                 alert('Error: ' + error.message);
             }
         }
+        */
         
-        // Subir video desde input
+        // Subida de videos deshabilitada - Los videos se suben desde la app de Telegram
+        // La aplicación web solo muestra y reproduce videos que ya están en Telegram
+        /*
         document.getElementById('videoInput').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (file) {
@@ -1802,10 +1821,10 @@
             }
         });
         
-        // Subir video desde botón flotante
         document.getElementById('uploadVideoBtn').addEventListener('click', () => {
             document.getElementById('videoInput').click();
         });
+        */
         
         // Enviar mensaje
         document.getElementById('sendBtn').addEventListener('click', sendMessage);

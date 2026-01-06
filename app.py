@@ -2872,12 +2872,14 @@ def get_video(video_id):
                             requested_limit = min(chunk_size, remaining_size, max_limit)
                             
                             # 🚀 CRÍTICO: Cuando estamos muy cerca del final (99.9%+), usar el tamaño restante exacto
-                            # Telegram permite usar el tamaño restante exacto cuando es menor que 1024
-                            # Pero cuando es mayor, debemos usar un múltiplo de 1024 que no exceda remaining_size
-                            if is_near_end and remaining_size < 1024:
-                                # Muy cerca del final y remaining_size < 1024: usar exactamente remaining_size
+                            # Telegram permite usar el tamaño restante exacto cuando estamos en el último chunk
+                            # Esto es especialmente importante cuando remaining_size no es múltiplo de 1024
+                            # Usamos un umbral de 100KB para considerar si estamos en el último chunk
+                            if is_near_end and remaining_size <= 100 * 1024:
+                                # Muy cerca del final y remaining_size <= 100KB: usar exactamente remaining_size
+                                # Telegram permite esto en el último chunk
                                 valid_limit = int(remaining_size)
-                                print(f"⚠️ Muy cerca del final con remaining_size < 1024, usando tamaño exacto: {valid_limit}", flush=True)
+                                print(f"⚠️ Muy cerca del final ({file_progress*100:.1f}%) con remaining_size={remaining_size} bytes (<=100KB), usando tamaño exacto: {valid_limit}", flush=True)
                             else:
                                 # Usar la función get_valid_limit con max_allowed=remaining_size
                                 # Esto asegura que el limit nunca exceda remaining_size y sea múltiplo de 1024

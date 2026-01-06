@@ -2871,62 +2871,68 @@ def get_video(video_id):
                             # 3. El máximo permitido según la posición
                             requested_limit = min(chunk_size, remaining_size, max_limit)
                             
-                            # 🚀 SOLUCIÓN SIMPLE Y DIRECTA: Calcular limit directamente desde remaining_size
-                            # Telegram requiere que limit sea múltiplo de 1024 y máximo 1MB (1048576 bytes)
-                            # NO usar get_valid_limit ni requested_limit, solo remaining_size
+                            # 🚀 SOLUCIÓN ULTRA SIMPLE: Calcular limit desde min(requested_limit, remaining_size, max_limit)
+                            # Telegram requiere que limit sea múltiplo de 1024
                             
-                            max_limit_telegram = 1024 * 1024  # 1MB máximo de Telegram
+                            # El limit debe ser el mínimo entre requested_limit, remaining_size y max_limit
+                            # Y debe ser múltiplo de 1024
+                            base_limit = min(requested_limit, remaining_size, max_limit)
                             
-                            if remaining_size < 1024 and remaining_size > 0:
-                                # Caso especial: remaining_size < 1024, usar tamaño exacto
-                                valid_limit = int(remaining_size)
-                                print(f"⚠️ remaining_size < 1024, usando tamaño exacto: {valid_limit}", flush=True)
+                            print(f"🔢 Cálculo de limit: requested_limit={requested_limit}, remaining_size={remaining_size}, max_limit={max_limit}, base_limit={base_limit}", flush=True)
+                            
+                            if base_limit < 1024 and base_limit > 0:
+                                # Caso especial: base_limit < 1024, usar tamaño exacto
+                                valid_limit = int(base_limit)
+                                print(f"⚠️ base_limit < 1024, usando tamaño exacto: {valid_limit}", flush=True)
                             else:
-                                # Calcular el múltiplo de 1024 más grande que no exceda remaining_size
-                                valid_limit = (int(remaining_size) // 1024) * 1024
+                                # Redondear hacia abajo al múltiplo de 1024 más cercano
+                                valid_limit = (int(base_limit) // 1024) * 1024
                                 
-                                # Si el resultado es 0 pero remaining_size >= 1024, usar 1024 como mínimo
-                                if valid_limit == 0 and remaining_size >= 1024:
+                                # Si el resultado es 0 pero base_limit >= 1024, usar 1024 como mínimo
+                                if valid_limit == 0 and base_limit >= 1024:
                                     valid_limit = 1024
                                 
-                                # Asegurar que no exceda el máximo de Telegram (1MB)
-                                if valid_limit > max_limit_telegram:
-                                    valid_limit = max_limit_telegram
-                                
-                                # Asegurar que no exceda remaining_size después de aplicar el máximo
-                                if valid_limit > remaining_size:
-                                    valid_limit = (int(remaining_size) // 1024) * 1024
-                                    if valid_limit == 0 and remaining_size >= 1024:
-                                        valid_limit = 1024
-                            
-                            # 🚀 VERIFICACIÓN FINAL ABSOLUTA: Garantizar que sea múltiplo de 1024
-                            # Esta es la ÚNICA verificación que necesitamos
-                            if remaining_size >= 1024:
-                                # Forzar a múltiplo de 1024
-                                valid_limit = (int(valid_limit) // 1024) * 1024
-                                # Asegurar que no exceda remaining_size
-                                if valid_limit > remaining_size:
-                                    valid_limit = (int(remaining_size) // 1024) * 1024
-                                # Si el resultado es 0, usar 1024 como mínimo
-                                if valid_limit == 0:
-                                    valid_limit = 1024
-                                # Asegurar que no exceda el máximo de Telegram
-                                if valid_limit > max_limit_telegram:
-                                    valid_limit = max_limit_telegram
+                                print(f"🔢 valid_limit después de redondear: {valid_limit} (base_limit={base_limit})", flush=True)
                             
                             # Convertir a int explícitamente
                             valid_limit = int(valid_limit)
                             
-                            # Verificación final antes de enviar
+                            # 🚀 VERIFICACIÓN FINAL ABSOLUTA ANTES DE ENVIAR
+                            # Verificar que sea múltiplo de 1024 (excepto si remaining_size < 1024)
+                            if remaining_size >= 1024:
+                                if valid_limit % 1024 != 0:
+                                    print(f"❌ ERROR: valid_limit ({valid_limit}) no es múltiplo de 1024, corrigiendo...", flush=True)
+                                    valid_limit = (int(valid_limit) // 1024) * 1024
+                                    if valid_limit == 0:
+                                        valid_limit = 1024
+                                    print(f"✅ Corregido a: {valid_limit}", flush=True)
+                                
+                                # Verificar que no exceda remaining_size
+                                if valid_limit > remaining_size:
+                                    print(f"❌ ERROR: valid_limit ({valid_limit}) > remaining_size ({remaining_size}), corrigiendo...", flush=True)
+                                    valid_limit = (int(remaining_size) // 1024) * 1024
+                                    if valid_limit == 0:
+                                        valid_limit = 1024
+                                    print(f"✅ Corregido a: {valid_limit}", flush=True)
+                                
+                                # Verificar que no exceda max_limit
+                                if valid_limit > max_limit:
+                                    print(f"❌ ERROR: valid_limit ({valid_limit}) > max_limit ({max_limit}), corrigiendo...", flush=True)
+                                    valid_limit = (int(max_limit) // 1024) * 1024
+                                    if valid_limit == 0:
+                                        valid_limit = 1024
+                                    print(f"✅ Corregido a: {valid_limit}", flush=True)
+                            
+                            # Verificación final antes de enviar - lanzar excepción si hay problemas
                             if remaining_size >= 1024:
                                 if valid_limit % 1024 != 0:
                                     raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) no es múltiplo de 1024. remaining_size={remaining_size}, valid_limit%1024={valid_limit % 1024}")
                                 if valid_limit > remaining_size:
                                     raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) > remaining_size ({remaining_size})")
-                                if valid_limit > max_limit_telegram:
-                                    raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) > max_limit_telegram ({max_limit_telegram})")
+                                if valid_limit > max_limit:
+                                    raise Exception(f"ERROR CRÍTICO: valid_limit ({valid_limit}) > max_limit ({max_limit})")
                             
-                            print(f"🔍 Intentando GetFileRequest range: offset={start}, limit={valid_limit} (solicitado: {chunk_size}, remaining: {remaining_size}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}, valid_limit<=remaining_size={valid_limit <= remaining_size}", flush=True)
+                            print(f"🔍 FINAL: Enviando GetFileRequest con offset={start}, limit={valid_limit} (remaining: {remaining_size}, max_limit: {max_limit}, file_size: {file_size}, progress: {file_progress*100:.1f}%), file_id={document.id}, limit%1024={valid_limit % 1024}, es_multiplo_1024={valid_limit % 1024 == 0}, valid_limit<=remaining_size={valid_limit <= remaining_size}, valid_limit<=max_limit={valid_limit <= max_limit}", flush=True)
                             
                             result = await client(GetFileRequest(
                                 location=file_location,

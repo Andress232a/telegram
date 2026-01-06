@@ -1234,12 +1234,46 @@ def get_or_create_client(phone):
                     except Exception as e:
                         print(f"⚠️ Error cerrando cliente antiguo: {e}")
         
-        # Esperar un momento para que SQLite libere el lock
-        time.sleep(0.1)
+        # SOLUCIÓN ULTRA ROBUSTA: Limpiar locks de SQLite antes de intentar crear el cliente
+        # Esto previene el error "database is locked" después de días de uso
+        print(f"🔧 Limpiando posibles locks de SQLite para sesión: {session_name}", flush=True)
         
-        # Intentar crear el cliente con reintentos en caso de "database is locked"
-        max_retries = 3
-        retry_delay = 0.5
+        # Intentar forzar la liberación del lock de SQLite
+        import sqlite3
+        db_path = f"{session_name}.session"
+        try:
+            if os.path.exists(db_path):
+                # Intentar abrir y cerrar la conexión para liberar locks
+                try:
+                    conn = sqlite3.connect(db_path, timeout=10.0)
+                    # Habilitar WAL mode para mejor manejo de concurrencia
+                    conn.execute('PRAGMA journal_mode=WAL;')
+                    conn.execute('PRAGMA busy_timeout=30000;')  # 30 segundos timeout
+                    conn.close()
+                    print(f"✅ Base de datos SQLite preparada: {db_path}", flush=True)
+                except sqlite3.OperationalError as sqlite_error:
+                    if 'locked' in str(sqlite_error).lower():
+                        print(f"⚠️ Base de datos bloqueada, intentando forzar liberación...", flush=True)
+                        # Esperar más tiempo y reintentar
+                        time.sleep(2)
+                        try:
+                            conn = sqlite3.connect(db_path, timeout=30.0)
+                            conn.execute('PRAGMA journal_mode=WAL;')
+                            conn.execute('PRAGMA busy_timeout=30000;')
+                            conn.close()
+                            print(f"✅ Lock liberado después de esperar", flush=True)
+                        except:
+                            print(f"⚠️ No se pudo liberar el lock, continuando de todas formas...", flush=True)
+        except Exception as cleanup_error:
+            print(f"⚠️ Error limpiando locks de SQLite: {cleanup_error}", flush=True)
+            # Continuar de todas formas
+        
+        # Esperar un momento adicional para que SQLite libere completamente el lock
+        time.sleep(0.5)
+        
+        # Intentar crear el cliente con reintentos más agresivos en caso de "database is locked"
+        max_retries = 5  # Aumentado de 3 a 5
+        retry_delay = 1.0  # Empezar con 1 segundo
         
         for attempt in range(max_retries):
             try:
@@ -1252,14 +1286,25 @@ def get_or_create_client(phone):
                     try:
                         run_async(client.connect(), loop, timeout=10)
                         if not client.is_connected():
-                            print(f"⚠️ Cliente creado pero no conectado después de connect()")
+                            print(f"⚠️ Cliente creado pero no conectado después de connect()", flush=True)
                     except Exception as e:
                         error_msg = str(e).lower()
                         if 'database is locked' in error_msg or 'locked' in error_msg:
                             if attempt < max_retries - 1:
-                                print(f"⚠️ Database locked, reintentando en {retry_delay}s (intento {attempt + 1}/{max_retries})...")
-                                time.sleep(retry_delay)
-                                retry_delay *= 2  # Backoff exponencial
+                                wait_time = retry_delay * (2 ** attempt)  # Backoff exponencial más agresivo
+                                print(f"⚠️ Database locked, reintentando en {wait_time}s (intento {attempt + 1}/{max_retries})...", flush=True)
+                                time.sleep(wait_time)
+                                
+                                # Intentar limpiar el lock nuevamente antes de reintentar
+                                try:
+                                    if os.path.exists(db_path):
+                                        conn = sqlite3.connect(db_path, timeout=30.0)
+                                        conn.execute('PRAGMA journal_mode=WAL;')
+                                        conn.execute('PRAGMA busy_timeout=30000;')
+                                        conn.close()
+                                except:
+                                    pass
+                                
                                 continue
                         raise
                 
@@ -1272,23 +1317,69 @@ def get_or_create_client(phone):
                     'loop': loop
                 }
                 
+                print(f"✅ Cliente creado y conectado exitosamente para {phone}", flush=True)
                 return client
                 
             except Exception as e:
                 error_msg = str(e).lower()
                 if 'database is locked' in error_msg or 'locked' in error_msg:
                     if attempt < max_retries - 1:
-                        print(f"⚠️ Database locked al crear cliente, reintentando en {retry_delay}s (intento {attempt + 1}/{max_retries})...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Backoff exponencial
+                        wait_time = retry_delay * (2 ** attempt)  # Backoff exponencial más agresivo
+                        print(f"⚠️ Database locked al crear cliente, reintentando en {wait_time}s (intento {attempt + 1}/{max_retries})...", flush=True)
+                        time.sleep(wait_time)
+                        
+                        # Intentar limpiar el lock nuevamente antes de reintentar
+                        try:
+                            if os.path.exists(db_path):
+                                conn = sqlite3.connect(db_path, timeout=30.0)
+                                conn.execute('PRAGMA journal_mode=WAL;')
+                                conn.execute('PRAGMA busy_timeout=30000;')
+                                conn.close()
+                        except:
+                            pass
+                        
                         continue
                     else:
-                        print(f"❌ Error: database is locked después de {max_retries} intentos")
-                        raise Exception("La base de datos de sesión está bloqueada. Por favor, espera unos segundos e intenta de nuevo.")
+                        print(f"❌ Error: database is locked después de {max_retries} intentos", flush=True)
+                        # Último intento: forzar limpieza agresiva
+                        try:
+                            print(f"🔧 Intentando limpieza agresiva de locks...", flush=True)
+                            # Cerrar todos los clientes que puedan estar bloqueando
+                            for other_phone, other_data in list(telegram_clients.items()):
+                                if other_data.get('session_name') == session_name:
+                                    try:
+                                        other_client = other_data.get('client')
+                                        if other_client:
+                                            other_loop = other_data.get('loop')
+                                            if other_loop and not other_loop.is_closed():
+                                                if other_client.is_connected():
+                                                    run_async(other_client.disconnect(), other_loop, timeout=10)
+                                        del telegram_clients[other_phone]
+                                    except:
+                                        pass
+                            time.sleep(2)
+                            
+                            # Intentar una última vez
+                            loop = get_event_loop()
+                            client = TelegramClient(session_name, api_id, api_hash, loop=loop)
+                            if not client.is_connected():
+                                run_async(client.connect(), loop, timeout=10)
+                            telegram_clients[phone] = {
+                                'client': client,
+                                'loop': loop,
+                                'session_name': session_name,
+                                'api_id': api_id,
+                                'api_hash': api_hash
+                            }
+                            print(f"✅ Cliente creado después de limpieza agresiva", flush=True)
+                            return client
+                        except Exception as final_error:
+                            print(f"❌ Error final después de limpieza agresiva: {final_error}", flush=True)
+                            raise Exception("La base de datos de sesión está bloqueada después de múltiples intentos. Por favor, espera unos minutos e intenta de nuevo, o reinicia el servidor si el problema persiste.")
                 else:
-                    print(f"❌ Error conectando cliente en get_or_create_client: {e}")
+                    print(f"❌ Error conectando cliente en get_or_create_client: {e}", flush=True)
                     import traceback
-                    print(traceback.format_exc())
+                    print(traceback.format_exc(), flush=True)
                     raise
 
 @app.route('/api/chat/<chat_id>/messages', methods=['GET'])

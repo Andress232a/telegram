@@ -2850,8 +2850,9 @@ def get_video(video_id):
                         # SOLUCIÓN SIMPLE: Usar offset exacto del Range HTTP, calcular limit como min(512KB, end - offset)
                         # Avanzar offset por bytes reales descargados, bucle depende solo de offset < end
                         try:
-                            # Límite máximo absoluto para GetFileRequest (512KB = 524288 bytes)
-                            MAX_CHUNK_SIZE = 512 * 1024  # 512KB
+                            # Límite fijo y conservador para GetFileRequest (64KB = 65536 bytes)
+                            # Usar un tamaño fijo y pequeño reduce el riesgo de exceder remaining_size real
+                            FIXED_CHUNK_SIZE = 64 * 1024  # 64KB - múltiplo de 1024, más seguro
                             
                             # Límite máximo por request HTTP (5MB) - el navegador hará múltiples requests
                             MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -2914,10 +2915,10 @@ def get_video(video_id):
                                 # Calcular cuántos bytes quedan por descargar en este rango
                                 remaining_in_range = end - current_offset
                                 
-                                # Calcular limit como min(512KB, remaining_in_range)
-                                # Pero asegurándonos de que sea múltiplo de 1024 (excepto si es < 1024)
-                                if remaining_in_range >= MAX_CHUNK_SIZE:
-                                    limit = MAX_CHUNK_SIZE  # 524288 bytes (múltiplo de 1024)
+                                # Usar un limit fijo y conservador (64KB) para evitar exceder remaining_size real
+                                # Si remaining_in_range es menor que 64KB, usar el tamaño exacto (redondeado a múltiplo de 1024)
+                                if remaining_in_range >= FIXED_CHUNK_SIZE:
+                                    limit = FIXED_CHUNK_SIZE  # 65536 bytes (64KB, múltiplo de 1024)
                                 elif remaining_in_range >= 1024:
                                     # Redondear hacia abajo al múltiplo de 1024 más cercano
                                     limit = (int(remaining_in_range) // 1024) * 1024
@@ -2929,17 +2930,12 @@ def get_video(video_id):
                                 if limit <= 0:
                                     break
                                 
-                                # Asegurar que limit no exceda remaining_in_range
-                                if limit > remaining_in_range:
-                                    limit = int(remaining_in_range) if remaining_in_range < 1024 else ((int(remaining_in_range) // 1024) * 1024)
-                                
-                                # Asegurar que limit sea múltiplo de 1024 si es >= 1024
-                                if limit >= 1024 and (limit % 1024) != 0:
-                                    limit = (int(limit) // 1024) * 1024
-                                
                                 # Verificación final: limit nunca debe exceder remaining_in_range
                                 if limit > remaining_in_range:
-                                    limit = int(remaining_in_range) if remaining_in_range < 1024 else ((int(remaining_in_range) // 1024) * 1024)
+                                    if remaining_in_range < 1024:
+                                        limit = int(remaining_in_range)
+                                    else:
+                                        limit = (int(remaining_in_range) // 1024) * 1024
                                 
                                 if limit <= 0:
                                     break
@@ -2985,19 +2981,32 @@ def get_video(video_id):
                                     error_msg = str(chunk_error)
                                     print(f"❌ Error en GetFileRequest: offset={current_offset}, limit={limit}, error={error_type}: {error_msg}", flush=True)
                                     
-                                    # Si es un error de limit, intentar con un chunk más pequeño
+                                    # Si es un error de limit, intentar con chunks progresivamente más pequeños
                                     if 'limit' in error_msg.lower() or 'LimitInvalid' in error_type:
                                         remaining_in_range = end - current_offset
-                                        # Calcular un limit más pequeño que sea múltiplo de 1024 y no exceda remaining_in_range
-                                        retry_limit = min(1024, remaining_in_range)
-                                        if retry_limit >= 1024:
-                                            retry_limit = (int(retry_limit) // 1024) * 1024
-                                        else:
-                                            retry_limit = int(retry_limit) if retry_limit > 0 else 0
                                         
-                                        if retry_limit > 0 and retry_limit <= remaining_in_range:
+                                        # Intentar con tamaños progresivamente más pequeños: 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
+                                        retry_sizes = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]
+                                        
+                                        for retry_size in retry_sizes:
+                                            if retry_size > remaining_in_range:
+                                                continue
+                                            
+                                            # Si es >= 1024, debe ser múltiplo de 1024
+                                            if retry_size >= 1024:
+                                                retry_limit = (int(remaining_in_range) // 1024) * 1024
+                                                if retry_limit == 0:
+                                                    retry_limit = 1024
+                                                retry_limit = min(retry_limit, retry_size)
+                                            else:
+                                                # Si es < 1024, usar el tamaño exacto o el remaining_in_range, lo que sea menor
+                                                retry_limit = min(retry_size, int(remaining_in_range))
+                                            
+                                            if retry_limit <= 0:
+                                                continue
+                                            
                                             try:
-                                                print(f"🔄 Reintentando con limit más pequeño: {retry_limit} (remaining_in_range={remaining_in_range}, offset={current_offset})", flush=True)
+                                                print(f"🔄 Reintentando con limit={retry_limit} (intento con tamaño base={retry_size}, remaining_in_range={remaining_in_range}, offset={current_offset})", flush=True)
                                                 result = await client(GetFileRequest(
                                                     location=file_location,
                                                     offset=current_offset,
@@ -3018,10 +3027,22 @@ def get_video(video_id):
                                                     # Avanzar offset por la cantidad real de bytes descargados
                                                     current_offset += len(chunk_data)
                                                     chunks_downloaded += 1
-                                                    print(f"✅ Reintento exitoso: {len(chunk_data)} bytes descargados", flush=True)
-                                                    continue
+                                                    print(f"✅ Reintento exitoso con limit={retry_limit}: {len(chunk_data)} bytes descargados", flush=True)
+                                                    break  # Salir del bucle de retry_sizes
                                             except Exception as retry_error:
-                                                print(f"❌ Reintento falló: {retry_error}", flush=True)
+                                                retry_error_type = type(retry_error).__name__
+                                                retry_error_msg = str(retry_error)
+                                                # Si es otro LimitInvalidError, continuar con el siguiente tamaño
+                                                if 'limit' in retry_error_msg.lower() or 'LimitInvalid' in retry_error_type:
+                                                    print(f"⚠️ Reintento con limit={retry_limit} también falló, probando tamaño más pequeño...", flush=True)
+                                                    continue
+                                                else:
+                                                    # Si es otro tipo de error, no continuar
+                                                    print(f"❌ Reintento falló con error diferente: {retry_error}", flush=True)
+                                                    break
+                                        else:
+                                            # Si todos los reintentos fallaron
+                                            print(f"❌ Todos los reintentos fallaron, no se pudo descargar desde offset={current_offset}", flush=True)
                                     
                                     # Si no es un error de limit o el reintento falló, lanzar el error
                                     raise

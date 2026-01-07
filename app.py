@@ -145,6 +145,54 @@ video_memory_cache = {}  # Caché en memoria de videos (como Telegram - pre-carg
 CONFIG_FILE = 'telegram_config.json'  # Archivo para guardar configuración
 DB_CONFIG_FILE = 'db_config.json'  # Archivo de configuración de MySQL
 
+# Keep-alive para mantener clientes conectados permanentemente
+_keep_alive_thread = None
+_keep_alive_running = False
+
+def keep_alive_telegram_clients():
+    """Mantener clientes de Telegram conectados permanentemente para evitar 'database is locked'"""
+    global _keep_alive_running
+    _keep_alive_running = True
+    print("🔄 Iniciando keep-alive para mantener clientes conectados...", flush=True)
+    
+    while _keep_alive_running:
+        try:
+            time.sleep(300)  # Cada 5 minutos verificar conexiones
+            
+            # Verificar todos los clientes y mantenerlos conectados
+            for phone, client_data in list(telegram_clients.items()):
+                try:
+                    client = client_data.get('client')
+                    loop = client_data.get('loop')
+                    
+                    if client and loop and not loop.is_closed():
+                        try:
+                            # Verificar si está conectado
+                            if not client.is_connected():
+                                print(f"🔄 Reconectando cliente {phone} (keep-alive)...", flush=True)
+                                asyncio.set_event_loop(loop)
+                                run_async(client.connect(), loop, timeout=10)
+                            else:
+                                # Hacer un ping simple para mantener la conexión activa
+                                # Solo verificar que está conectado, no hacer operaciones pesadas
+                                pass
+                        except Exception as e:
+                            print(f"⚠️ Error en keep-alive para {phone}: {e}", flush=True)
+                            # No eliminar el cliente, solo registrar el error
+                except Exception as e:
+                    print(f"⚠️ Error verificando cliente {phone} en keep-alive: {e}", flush=True)
+        except Exception as e:
+            print(f"⚠️ Error en keep-alive thread: {e}", flush=True)
+            time.sleep(60)  # Esperar 1 minuto antes de reintentar
+    
+    print("🛑 Keep-alive detenido", flush=True)
+
+# Iniciar keep-alive al arrancar la aplicación
+if _keep_alive_thread is None or not _keep_alive_thread.is_alive():
+    _keep_alive_thread = threading.Thread(target=keep_alive_telegram_clients, daemon=True)
+    _keep_alive_thread.start()
+    print("✅ Keep-alive thread iniciado", flush=True)
+
 # Cargar configuración de base de datos
 def load_db_config():
     """Cargar configuración de MySQL desde archivo"""
@@ -542,23 +590,25 @@ def connect():
         return jsonify({'message': 'Código enviado', 'needs_code': True})
     
     try:
-        # CRÍTICO: Cerrar cualquier cliente existente para esta sesión antes de crear uno nuevo
-        # Esto previene el error "database is locked"
+        # NO cerrar cliente existente si está conectado - reutilizarlo
+        # Esto evita "database is locked" al evitar recrear clientes
         if phone in telegram_clients:
             old_client_data = telegram_clients[phone]
             old_client = old_client_data.get('client')
-            if old_client:
+            old_loop = old_client_data.get('loop')
+            if old_client and old_loop and not old_loop.is_closed():
                 try:
-                    print("🔒 Cerrando cliente existente antes de crear uno nuevo...")
-                    old_loop = old_client_data.get('loop')
-                    if old_loop and not old_loop.is_closed():
-                        if old_client.is_connected():
-                            run_async(old_client.disconnect(), old_loop, timeout=5)
-                    del telegram_clients[phone]
-                    time.sleep(0.2)  # Esperar a que SQLite libere el lock
-                    print("✅ Cliente antiguo cerrado")
+                    asyncio.set_event_loop(old_loop)
+                    if old_client.is_connected():
+                        print("♻️ Reutilizando cliente existente conectado (evita locks)", flush=True)
+                        # Verificar autorización sin desconectar
+                        is_authorized = run_async(old_client.is_user_authorized(), old_loop, timeout=5)
+                        if is_authorized:
+                            # Ya está conectado y autorizado, usar este cliente
+                            return jsonify({'message': 'Ya conectado', 'needs_code': False})
                 except Exception as e:
-                    print(f"⚠️ Error cerrando cliente antiguo: {e}")
+                    print(f"⚠️ Error verificando cliente existente: {e}")
+                    # Continuar para crear uno nuevo solo si es necesario
         
         # Asegurarse de que hay un event loop antes de crear el cliente
         print("🔄 Creando event loop...")
@@ -667,6 +717,7 @@ def verify_code():
         return jsonify({'error': 'No se encontró el hash del código. Por favor, intenta conectar de nuevo.'}), 400
     
     # Usar el cliente existente si está disponible, o recrearlo
+    # NO desconectar clientes existentes - esto evita "database is locked"
     if 'client' in client_data and client_data['client'] is not None:
         client = client_data['client']
         # Obtener el loop del cliente o crear uno nuevo
@@ -674,26 +725,16 @@ def verify_code():
         if not loop or loop.is_closed():
             loop = get_event_loop()
             client_data['loop'] = loop
-        print("🔄 Usando cliente existente...")
+        print("🔄 Usando cliente existente (evita locks)...")
     else:
         # Asegurarse de que hay un event loop antes de crear el cliente
         loop = get_event_loop()
-        # Recrear cliente en este thread con lock para prevenir "database is locked"
+        # Crear cliente nuevo solo si no existe
+        # NO cerrar clientes antiguos - esto evita "database is locked"
         with _client_creation_lock:
-            # Cerrar cliente antiguo si existe
-            if 'client' in client_data and client_data['client']:
-                try:
-                    old_client = client_data['client']
-                    if old_client.is_connected():
-                        old_loop = client_data.get('loop')
-                        if old_loop and not old_loop.is_closed():
-                            run_async(old_client.disconnect(), old_loop, timeout=5)
-                    time.sleep(0.1)  # Esperar a que SQLite libere el lock
-                except:
-                    pass
-            
             client = TelegramClient(client_data['session_name'], client_data['api_id'], client_data['api_hash'], loop=loop)
             client_data['loop'] = loop
+            client_data['client'] = client
             print("🆕 Creando nuevo cliente...")
     
     try:
@@ -1191,29 +1232,28 @@ def get_or_create_client(phone):
                             return client
                         else:
                             print(f"⚠️ Cliente existe pero no está conectado, intentando reconectar...")
-                            # Intentar reconectar
+                            # Intentar reconectar SIN eliminar del diccionario
+                            # Esto evita recrear clientes que causan "database is locked"
                             try:
                                 run_async(client.connect(), loop, timeout=10)
                                 # Verificar nuevamente (síncrono)
                                 if client.is_connected():
+                                    print(f"✅ Cliente reconectado exitosamente", flush=True)
                                     return client
+                                else:
+                                    print(f"⚠️ Cliente no se pudo reconectar, pero manteniéndolo en memoria...", flush=True)
+                                    # NO eliminar, solo retornar None para que se intente crear uno nuevo
+                                    # pero sin eliminar el existente (evita locks)
                             except Exception as e:
                                 print(f"⚠️ Error reconectando cliente: {e}")
-                                # Si falla la reconexión, crear uno nuevo
-                                del telegram_clients[phone]
+                                # NO eliminar el cliente del diccionario para evitar locks
+                                # El keep-alive lo intentará reconectar más tarde
                     except Exception as e:
                         print(f"⚠️ Error verificando conexión del cliente: {e}")
-                        # Si hay error, el cliente puede estar en mal estado, crear uno nuevo
-                        try:
-                            # Intentar desconectar de forma segura
-                            if hasattr(client, 'is_connected') and client.is_connected():
-                                try:
-                                    run_async(client.disconnect(), loop, timeout=5)
-                                except:
-                                    pass
-                        except:
-                            pass
-                        del telegram_clients[phone]
+                        # NO eliminar el cliente ni desconectarlo
+                        # Esto evita "database is locked" al recrear clientes
+                        # El keep-alive intentará reconectarlo más tarde
+                        print(f"⚠️ Manteniendo cliente en memoria para evitar locks, keep-alive lo reconectará", flush=True)
             else:
                 print(f"⚠️ Loop del cliente cerrado, necesitamos crear un nuevo cliente...")
                 # El loop está cerrado, NO podemos usar el cliente
@@ -1277,25 +1317,17 @@ def get_or_create_client(phone):
             if client and client.is_connected():
                 return client
         
-        # Cerrar cualquier cliente antiguo que pueda estar bloqueando la sesión
-        # Buscar otros clientes que usen la misma sesión
+        # NO cerrar clientes antiguos que usen la misma sesión
+        # Esto evita "database is locked" - si hay un cliente conectado, reutilizarlo
         for other_phone, other_data in list(telegram_clients.items()):
             if other_phone != phone and other_data.get('session_name') == session_name:
                 other_client = other_data.get('client')
-                if other_client:
-                    try:
-                        print(f"🔒 Cerrando cliente antiguo para {other_phone} que usa la misma sesión...")
-                        if other_client.is_connected():
-                            other_loop = other_data.get('loop')
-                            if other_loop and not other_loop.is_closed():
-                                try:
-                                    run_async(other_client.disconnect(), other_loop, timeout=5)
-                                except:
-                                    pass
-                        del telegram_clients[other_phone]
-                        print(f"✅ Cliente antiguo cerrado")
-                    except Exception as e:
-                        print(f"⚠️ Error cerrando cliente antiguo: {e}")
+                if other_client and other_client.is_connected():
+                    # Reutilizar el cliente existente en lugar de crear uno nuevo
+                    print(f"♻️ Reutilizando cliente existente para {other_phone} (misma sesión)", flush=True)
+                    # Actualizar el diccionario para que apunte a este teléfono también
+                    # Pero mantener ambos para evitar problemas
+                    return other_client
         
         # SOLUCIÓN ULTRA ROBUSTA: Limpiar locks de SQLite antes de intentar crear el cliente
         # Esto previene el error "database is locked" después de días de uso
@@ -1304,25 +1336,77 @@ def get_or_create_client(phone):
         # Intentar forzar la liberación del lock de SQLite
         import sqlite3
         db_path = f"{session_name}.session"
+        wal_path = f"{session_name}.session-wal"
+        shm_path = f"{session_name}.session-shm"
+        
+        # Detectar si la sesión ha estado inactiva por mucho tiempo
+        # Si el archivo de sesión existe, verificar su última modificación
+        session_inactive = False
+        if os.path.exists(db_path):
+            try:
+                import time as time_module
+                last_modified = os.path.getmtime(db_path)
+                hours_since_modified = (time_module.time() - last_modified) / 3600
+                if hours_since_modified > 12:  # Más de 12 horas sin usar
+                    session_inactive = True
+                    print(f"⏰ Sesión inactiva por {hours_since_modified:.1f} horas, limpieza agresiva...", flush=True)
+            except:
+                pass
+        
         try:
             if os.path.exists(db_path):
+                # Si la sesión ha estado inactiva, hacer limpieza más agresiva
+                if session_inactive:
+                    print(f"🧹 Limpieza agresiva para sesión inactiva...", flush=True)
+                    # Eliminar archivos WAL y SHM que pueden tener locks residuales
+                    for lock_file in [wal_path, shm_path]:
+                        if os.path.exists(lock_file):
+                            try:
+                                print(f"🗑️ Eliminando archivo de lock residual: {lock_file}", flush=True)
+                                os.remove(lock_file)
+                                print(f"✅ Archivo eliminado: {lock_file}", flush=True)
+                            except Exception as remove_error:
+                                print(f"⚠️ No se pudo eliminar {lock_file}: {remove_error}", flush=True)
+                    time.sleep(1)  # Esperar más tiempo para sesiones inactivas
+                
                 # Intentar abrir y cerrar la conexión para liberar locks
                 try:
-                    conn = sqlite3.connect(db_path, timeout=10.0)
+                    conn = sqlite3.connect(db_path, timeout=30.0 if session_inactive else 10.0)
                     # Habilitar WAL mode para mejor manejo de concurrencia
                     conn.execute('PRAGMA journal_mode=WAL;')
                     conn.execute('PRAGMA busy_timeout=30000;')  # 30 segundos timeout
+                    # Para sesiones inactivas, hacer un checkpoint para limpiar WAL
+                    if session_inactive:
+                        try:
+                            conn.execute('PRAGMA wal_checkpoint(TRUNCATE);')
+                            print(f"✅ Checkpoint WAL ejecutado", flush=True)
+                        except:
+                            pass
                     conn.close()
                     print(f"✅ Base de datos SQLite preparada: {db_path}", flush=True)
                 except sqlite3.OperationalError as sqlite_error:
                     if 'locked' in str(sqlite_error).lower():
                         print(f"⚠️ Base de datos bloqueada, intentando forzar liberación...", flush=True)
+                        # Para sesiones inactivas, intentar eliminar archivos de lock
+                        if session_inactive:
+                            for lock_file in [wal_path, shm_path]:
+                                if os.path.exists(lock_file):
+                                    try:
+                                        os.remove(lock_file)
+                                        print(f"✅ Archivo de lock eliminado: {lock_file}", flush=True)
+                                    except:
+                                        pass
                         # Esperar más tiempo y reintentar
-                        time.sleep(2)
+                        time.sleep(3 if session_inactive else 2)
                         try:
-                            conn = sqlite3.connect(db_path, timeout=30.0)
+                            conn = sqlite3.connect(db_path, timeout=60.0 if session_inactive else 30.0)
                             conn.execute('PRAGMA journal_mode=WAL;')
                             conn.execute('PRAGMA busy_timeout=30000;')
+                            if session_inactive:
+                                try:
+                                    conn.execute('PRAGMA wal_checkpoint(TRUNCATE);')
+                                except:
+                                    pass
                             conn.close()
                             print(f"✅ Lock liberado después de esperar", flush=True)
                         except:
@@ -1332,11 +1416,13 @@ def get_or_create_client(phone):
             # Continuar de todas formas
         
         # Esperar un momento adicional para que SQLite libere completamente el lock
-        time.sleep(0.5)
+        # Más tiempo para sesiones inactivas
+        time.sleep(1.0 if session_inactive else 0.5)
         
         # Intentar crear el cliente con reintentos más agresivos en caso de "database is locked"
-        max_retries = 5  # Aumentado de 3 a 5
-        retry_delay = 1.0  # Empezar con 1 segundo
+        # Más reintentos y tiempo para sesiones inactivas
+        max_retries = 8 if session_inactive else 5
+        retry_delay = 2.0 if session_inactive else 1.0  # Empezar con más tiempo para sesiones inactivas
         
         for attempt in range(max_retries):
             try:
@@ -3028,6 +3114,15 @@ def get_video(video_id):
                 chunk_data = run_async(download_range(), client_loop, timeout=timeout_seconds)
                 
                 if chunk_data and len(chunk_data) > 0:
+                    # Si es HEAD request, solo devolver headers
+                    if request.method == 'HEAD':
+                        headers = {
+                            **base_headers,
+                            'Content-Range': f'bytes {start}-{start+len(chunk_data)-1}/{file_size}',
+                            'Content-Length': str(len(chunk_data)),
+                        }
+                        return Response('', 206, headers, mimetype=mime_type)
+                    
                     headers = {
                         **base_headers,
                         'Content-Range': f'bytes {start}-{start+len(chunk_data)-1}/{file_size}',

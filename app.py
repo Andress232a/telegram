@@ -2408,9 +2408,22 @@ def get_video_thumbnail(video_id):
     if not video_info:
         return jsonify({'error': 'Video no encontrado'}), 404
     
+    # Permitir acceso sin sesión usando configuración guardada (para URLs compartidas)
     phone = session.get('phone')
     if not phone:
-        return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
+        # Intentar cargar configuración desde archivo como fallback
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    saved_config = json.load(f)
+                    phone = saved_config.get('phone')
+                    if phone:
+                        print(f"📱 Usando configuración guardada para thumbnail (sin sesión): {phone}")
+        except Exception as config_error:
+            print(f"⚠️ Error cargando configuración guardada: {config_error}")
+    
+    if not phone:
+        return jsonify({'error': 'No se pudo acceder al video. La configuración no está disponible.'}), 401
     
     try:
         client = get_or_create_client(phone)
@@ -2530,40 +2543,33 @@ def get_video(video_id):
         
         print(f"✅ Video encontrado en DB: chat_id={video_info.get('chat_id')}, message_id={video_info.get('message_id')}")
         
-        # Obtener phone de la sesión o configuración guardada
+        # Obtener phone de la sesión o configuración guardada (permitir acceso sin sesión para compartir URLs)
         phone = session.get('phone')
         if not phone:
-            print(f"❌ No hay sesión activa para video {video_id}")
+            print(f"⚠️ No hay sesión activa para video {video_id}, intentando usar configuración guardada...")
             print(f"📋 Contenido de session: {list(session.keys())}")
-            # Intentar cargar configuración desde archivo como fallback
+            # Intentar cargar configuración desde archivo como fallback (para URLs compartidas)
             try:
                 if os.path.exists(CONFIG_FILE):
                     with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                         saved_config = json.load(f)
                         phone = saved_config.get('phone')
                         if phone:
-                            print(f"📱 Usando configuración guardada: {phone}")
-                            # Restaurar sesión desde configuración guardada
-                            session['phone'] = phone
-                            session['api_id'] = saved_config.get('api_id')
-                            session['api_hash'] = saved_config.get('api_hash')
-                            session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
+                            print(f"📱 Usando configuración guardada para acceso sin sesión: {phone}")
+                            # NO restaurar sesión aquí - solo usar para obtener el cliente
+                            # Esto permite que las URLs compartidas funcionen sin requerir login
             except Exception as config_error:
                 print(f"⚠️ Error cargando configuración guardada: {config_error}")
             
             if not phone:
                 return jsonify({
-                    'error': 'Sesión no disponible. Por favor, inicia sesión.',
-                    'error_type': 'NoSession',
+                    'error': 'No se pudo acceder al video. La configuración no está disponible.',
+                    'error_type': 'NoConfig',
                     'video_id': video_id,
-                    'suggestion': 'Por favor, inicia sesión en la aplicación.'
+                    'suggestion': 'Por favor, inicia sesión en la aplicación principal.'
                 }), 401
         
-        # Verificar que la sesión es válida para este usuario
-        if 'phone' not in session:
-            return jsonify({'error': 'Sesión no disponible. Por favor, inicia sesión.'}), 401
-        
-        # Obtener cliente de Telegram
+        # Obtener cliente de Telegram (phone ya está obtenido de sesión o configuración guardada)
         try:
             print(f"🔌 Intentando obtener cliente de Telegram para {phone}...")
             client = get_or_create_client(phone)

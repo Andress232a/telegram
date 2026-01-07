@@ -446,17 +446,26 @@ def load_saved_config():
 
 def save_config(api_id, api_hash, phone, session_name):
     """Guardar configuración"""
+    # Validar que api_id sea un número válido antes de guardar
+    try:
+        # Convertir a int para validar, luego guardar como string para JSON
+        api_id_int = int(str(api_id).strip())
+        api_id_str = str(api_id_int)  # Guardar como string numérico
+    except (ValueError, TypeError):
+        raise ValueError(f"api_id debe ser un número válido, recibido: '{api_id}'")
+    
     config = {
-        'api_id': api_id,
-        'api_hash': api_hash,
-        'phone': phone,
-        'session_name': session_name
+        'api_id': api_id_str,  # Guardar como string numérico
+        'api_hash': str(api_hash).strip(),
+        'phone': str(phone).strip(),
+        'session_name': str(session_name).strip()
     }
     try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f)
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Error guardando configuración: {e}")
         return False
 
 def delete_config():
@@ -1244,7 +1253,19 @@ def get_or_create_client(phone):
     if not api_id or not api_hash:
         raise ValueError(f"No se pudo obtener api_id/api_hash para {phone}. Por favor, inicia sesión.")
     
-    api_id = int(api_id)
+    # Validar y convertir api_id a int (manejar casos donde puede ser string o número)
+    try:
+        # Si api_id es string, intentar convertirlo
+        if isinstance(api_id, str):
+            # Si contiene caracteres no numéricos, es inválido
+            if not api_id.strip().isdigit():
+                raise ValueError(f"api_id inválido: '{api_id}'. Debe ser un número. Por favor, verifica tu configuración en {CONFIG_FILE}")
+            api_id = int(api_id.strip())
+        else:
+            api_id = int(api_id)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"api_id inválido: '{api_id}'. Debe ser un número. Por favor, verifica tu configuración en {CONFIG_FILE}. Error: {e}")
+    
     if not session_name:
         session_name = f"sessions/{secure_filename(phone)}"
     

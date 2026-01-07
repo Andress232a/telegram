@@ -1220,9 +1220,33 @@ def get_or_create_client(phone):
     # Si no hay cliente o no está conectado, crear uno nuevo
     # CRÍTICO: Usar lock para prevenir creación concurrente de clientes con la misma sesión SQLite
     # Esto previene el error "database is locked"
-    session_name = session.get('session_name', f"sessions/{secure_filename(phone)}")
-    api_id = int(session['api_id'])
-    api_hash = session['api_hash']
+    
+    # Obtener configuración de sesión o configuración guardada
+    session_name = session.get('session_name')
+    api_id = session.get('api_id')
+    api_hash = session.get('api_hash')
+    
+    # Si no hay sesión activa, cargar desde configuración guardada
+    if not api_id or not api_hash:
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    saved_config = json.load(f)
+                    if saved_config.get('phone') == phone:
+                        api_id = saved_config.get('api_id')
+                        api_hash = saved_config.get('api_hash')
+                        session_name = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
+                        print(f"📱 Usando configuración guardada para cliente: api_id={api_id}, session_name={session_name}")
+        except Exception as config_error:
+            print(f"⚠️ Error cargando configuración guardada: {config_error}")
+    
+    # Validar que tenemos los datos necesarios
+    if not api_id or not api_hash:
+        raise ValueError(f"No se pudo obtener api_id/api_hash para {phone}. Por favor, inicia sesión.")
+    
+    api_id = int(api_id)
+    if not session_name:
+        session_name = f"sessions/{secure_filename(phone)}"
     
     with _client_creation_lock:
         # Verificar nuevamente dentro del lock (double-check pattern)

@@ -2856,13 +2856,36 @@ def get_video(video_id):
                             # Límite máximo por request HTTP (5MB) - el navegador hará múltiples requests
                             MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB
                             
-                            # Calcular el rango exacto solicitado
-                            end = start + chunk_size
+                            # ESTRATEGIA: Dividir el video en dos mitades
+                            # Primero cargar la primera mitad, luego la segunda mitad
+                            video_half = file_size // 2
+                            # Umbral para empezar a precargar la segunda mitad (80% de la primera mitad)
+                            precache_threshold = int(video_half * 0.8)
                             
-                            # Limitar el tamaño máximo a descargar por request HTTP
-                            if chunk_size > MAX_HTTP_RESPONSE_SIZE:
+                            # Calcular el rango exacto solicitado
+                            requested_end = start + chunk_size
+                            
+                            # Si el rango solicitado está en la primera mitad
+                            if start < video_half:
+                                # Si estamos cerca del final de la primera mitad (más del 80%), permitir precargar un poco de la segunda mitad
+                                if start >= precache_threshold:
+                                    # Permitir cargar hasta el final de la primera mitad + un poco de la segunda mitad (10% de la segunda mitad)
+                                    max_end_first_half = video_half + int((file_size - video_half) * 0.1)
+                                    end = min(requested_end, max_end_first_half)
+                                    print(f"📦 Cerca del final de primera mitad (start={start} >= {precache_threshold}): permitiendo precarga hasta {end} (mitad: {video_half}, max_precache: {max_end_first_half})", flush=True)
+                                else:
+                                    # Estamos en la primera mitad, limitar al final de la primera mitad
+                                    end = min(requested_end, video_half)
+                                    print(f"📦 Primera mitad: limitando end a {end} (mitad del video: {video_half}, solicitado: {requested_end})", flush=True)
+                            else:
+                                # Estamos en la segunda mitad, permitir cargar normalmente
+                                end = requested_end
+                                print(f"📦 Segunda mitad: usando rango completo hasta {end}", flush=True)
+                            
+                            # Limitar el tamaño máximo a descargar por request HTTP (aplicar después de la lógica de mitades)
+                            if (end - start) > MAX_HTTP_RESPONSE_SIZE:
                                 end = start + MAX_HTTP_RESPONSE_SIZE
-                                print(f"⚠️ Rango solicitado ({chunk_size} bytes) excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
+                                print(f"⚠️ Rango solicitado excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
                             
                             buffer = BytesIO()
                             # CRÍTICO: El offset DEBE ser múltiplo de 1024 según la API de Telegram

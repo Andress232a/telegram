@@ -2897,12 +2897,15 @@ def get_video(video_id):
         print(f"🎬 Streaming video: {mime_type}, tamaño: {file_size} bytes, video_id: {video_id}")
         
         # Headers base para todas las respuestas
+        # IMPORTANTE: Headers optimizados para compatibilidad con navegadores móviles
         base_headers = {
             'Content-Type': mime_type,
             'Accept-Ranges': 'bytes',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Range',
+            'Access-Control-Allow-Headers': 'Range, Content-Range, Content-Length',
+            'Cache-Control': 'public, max-age=3600',
+            'X-Content-Type-Options': 'nosniff',
         }
         
         # Si hay range request, servir solo ese rango (streaming progresivo)
@@ -3295,16 +3298,26 @@ def get_video(video_id):
                 }), 500
             
             if initial_data:
+                # Calcular el rango correcto
+                range_end = len(initial_data) - 1
+                if range_end < 0:
+                    range_end = 0
+                
                 headers = {
                     **base_headers,
-                    'Content-Length': str(file_size),
-                    'Content-Range': f'bytes 0-{len(initial_data)-1}/{file_size}',
+                    'Content-Length': str(len(initial_data)),  # Longitud del chunk actual, no del archivo completo
+                    'Content-Range': f'bytes 0-{range_end}/{file_size}',
                 }
+                
                 # Si el archivo es pequeño, servir completo
                 if len(initial_data) >= file_size:
+                    # Archivo completo - usar 200 OK
+                    headers['Content-Length'] = str(file_size)
+                    headers.pop('Content-Range', None)  # No necesitamos Content-Range para respuesta completa
                     return Response(initial_data, 200, headers, mimetype=mime_type)
                 else:
                     # Servir solo los primeros bytes, el navegador hará range requests
+                    # CRÍTICO: Usar 206 Partial Content con Content-Range correcto
                     return Response(initial_data, 206, headers, mimetype=mime_type)
             else:
                 print(f"❌ download_initial_chunk retornó None para video {video_id}")

@@ -2758,6 +2758,21 @@ def get_video(video_id):
         message_id = video_info['message_id']
         target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
         
+        # Verificar que el cliente esté autenticado antes de intentar obtener mensajes
+        try:
+            is_authorized = run_async(client.is_user_authorized(), client_loop, timeout=10)
+            if not is_authorized:
+                print(f"⚠️ Cliente no está autenticado para {phone}")
+                return jsonify({
+                    'error': 'La sesión de Telegram no está autenticada. Por favor, inicia sesión nuevamente en la aplicación.',
+                    'error_type': 'NotAuthorized',
+                    'video_id': video_id,
+                    'suggestion': 'Inicia sesión en la aplicación web para autenticar la sesión de Telegram.'
+                }), 401
+        except Exception as auth_check_error:
+            print(f"⚠️ Error verificando autenticación: {auth_check_error}")
+            # Continuar de todas formas, el error se capturará más adelante
+        
         # Obtener información del mensaje y el archivo
         async def get_video_info():
             print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
@@ -2848,6 +2863,15 @@ def get_video(video_id):
             traceback_str = traceback.format_exc()
             print(f"❌ Error al obtener información del video {video_id}: {error_type}: {error_msg}")
             print(traceback_str)
+            
+            # Manejar específicamente el error de autenticación
+            if 'AuthKeyUnregisteredError' in error_type or 'not registered' in error_msg.lower():
+                return jsonify({
+                    'error': 'La sesión de Telegram no está autenticada. Por favor, inicia sesión nuevamente en la aplicación.',
+                    'error_type': 'AuthKeyUnregisteredError',
+                    'video_id': video_id,
+                    'suggestion': 'Inicia sesión en la aplicación web para autenticar la sesión de Telegram. Si el problema persiste, puede ser necesario eliminar los archivos de sesión y volver a autenticarse.'
+                }), 401
             
             # Devolver un mensaje de error más descriptivo
             error_response = {

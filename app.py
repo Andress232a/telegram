@@ -2453,29 +2453,30 @@ def get_video_thumbnail(video_id):
     if not video_info:
         return jsonify({'error': 'Video no encontrado'}), 404
     
-    # SIEMPRE usar configuración guardada para thumbnails públicos (no requiere sesión)
-    phone = None
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                saved_config = json.load(f)
-                phone = saved_config.get('phone')
-                if phone:
-                    print(f"📱 Usando configuración guardada del servidor para thumbnail público: {phone}")
-                    # Cargar también api_id, api_hash y session_name en la sesión temporalmente
-                    session['phone'] = phone
-                    session['api_id'] = saved_config.get('api_id')
-                    session['api_hash'] = saved_config.get('api_hash')
-                    session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
-        else:
-            print(f"⚠️ Archivo de configuración {CONFIG_FILE} no existe")
-    except Exception as config_error:
-        print(f"⚠️ Error cargando configuración guardada: {config_error}")
-        import traceback
-        print(traceback.format_exc())
+    # Primero intentar usar sesión activa (para mantener compatibilidad)
+    # Si no hay sesión, usar configuración guardada (para thumbnails públicos compartidos)
+    phone = session.get('phone')
+    if not phone:
+        print(f"⚠️ No hay sesión activa para thumbnail, intentando usar configuración guardada...")
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    saved_config = json.load(f)
+                    phone = saved_config.get('phone')
+                    if phone:
+                        print(f"📱 Usando configuración guardada del servidor para thumbnail público: {phone}")
+                        # Cargar también api_id, api_hash y session_name en la sesión temporalmente
+                        session['phone'] = phone
+                        session['api_id'] = saved_config.get('api_id')
+                        session['api_hash'] = saved_config.get('api_hash')
+                        session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
+        except Exception as config_error:
+            print(f"⚠️ Error cargando configuración guardada: {config_error}")
+            import traceback
+            print(traceback.format_exc())
     
     if not phone:
-        return jsonify({'error': 'No se pudo acceder al video. La configuración del servidor no está disponible.'}), 500
+        return jsonify({'error': 'No se pudo acceder al video. Por favor, inicia sesión o verifica la configuración del servidor.'}), 401
     
     try:
         client = get_or_create_client(phone)
@@ -2595,38 +2596,40 @@ def get_video(video_id):
         
         print(f"✅ Video encontrado en DB: chat_id={video_info.get('chat_id')}, message_id={video_info.get('message_id')}")
         
-        # SIEMPRE usar configuración guardada para videos públicos (no requiere sesión)
-        # Esto permite que cualquier persona con el link pueda ver el video
-        phone = None
-        try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    saved_config = json.load(f)
-                    phone = saved_config.get('phone')
-                    if phone:
-                        print(f"📱 Usando configuración guardada del servidor para video público: {phone}")
-                        # Cargar también api_id, api_hash y session_name en la sesión temporalmente
-                        # para que get_or_create_client pueda usarlos
-                        session['phone'] = phone
-                        session['api_id'] = saved_config.get('api_id')
-                        session['api_hash'] = saved_config.get('api_hash')
-                        session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
-                    else:
-                        print(f"⚠️ No se encontró 'phone' en la configuración guardada")
-            else:
-                print(f"⚠️ Archivo de configuración {CONFIG_FILE} no existe")
-        except Exception as config_error:
-            print(f"⚠️ Error cargando configuración guardada: {config_error}")
-            import traceback
-            print(traceback.format_exc())
+        # Primero intentar usar sesión activa (para mantener compatibilidad)
+        # Si no hay sesión, usar configuración guardada (para videos públicos compartidos)
+        phone = session.get('phone')
+        if not phone:
+            print(f"⚠️ No hay sesión activa para video {video_id}, intentando usar configuración guardada...")
+            try:
+                if os.path.exists(CONFIG_FILE):
+                    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                        saved_config = json.load(f)
+                        phone = saved_config.get('phone')
+                        if phone:
+                            print(f"📱 Usando configuración guardada del servidor para video público: {phone}")
+                            # Cargar también api_id, api_hash y session_name en la sesión temporalmente
+                            # para que get_or_create_client pueda usarlos
+                            session['phone'] = phone
+                            session['api_id'] = saved_config.get('api_id')
+                            session['api_hash'] = saved_config.get('api_hash')
+                            session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
+                        else:
+                            print(f"⚠️ No se encontró 'phone' en la configuración guardada")
+                else:
+                    print(f"⚠️ Archivo de configuración {CONFIG_FILE} no existe")
+            except Exception as config_error:
+                print(f"⚠️ Error cargando configuración guardada: {config_error}")
+                import traceback
+                print(traceback.format_exc())
         
         if not phone:
             return jsonify({
-                'error': 'No se pudo acceder al video. La configuración del servidor no está disponible.',
+                'error': 'No se pudo acceder al video. Por favor, inicia sesión o verifica la configuración del servidor.',
                 'error_type': 'NoConfig',
                 'video_id': video_id,
-                'suggestion': 'El servidor necesita estar configurado correctamente.'
-            }), 500
+                'suggestion': 'Inicia sesión en la aplicación o verifica que el servidor esté configurado correctamente.'
+            }), 401
         
         # Obtener cliente de Telegram (phone ya está obtenido de sesión o configuración guardada)
         try:

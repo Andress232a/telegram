@@ -2813,252 +2813,59 @@ def get_video(video_id):
                 
                 print(f"📊 Range request: start={start}, end={end}, chunk_size={chunk_size}, file_size={file_size}")
                 
-                # Descargar solo el rango solicitado usando GetFileRequest (streaming progresivo real)
+                # Descargar solo el rango solicitado usando iter_download (más robusto que GetFileRequest)
                 async def download_range():
-                    # Obtener el InputFileLocation del documento
+                    # Usar iter_download de Telethon que maneja automáticamente file_reference, offsets y límites
                     if hasattr(messages.media, 'document'):
                         document = messages.media.document
-                        # Obtener el InputDocumentFileLocation
-                        from telethon.tl.types import InputDocumentFileLocation
-                        from telethon.tl.functions.upload import GetFileRequest
                         
-                        file_location = InputDocumentFileLocation(
-                            id=document.id,
-                            access_hash=document.access_hash,
-                            file_reference=document.file_reference,
-                            thumb_size=''
-                        )
+                        # Límite máximo por request HTTP (5MB) - el navegador hará múltiples requests
+                        MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB
                         
-                        # Asegurarse de que file_reference esté actualizado
-                        if not document.file_reference:
-                            print(f"⚠️ file_reference vacío en range request, intentando actualizar...")
-                            try:
-                                updated_messages = await client.get_messages(target_chat, ids=message_id)
-                                if updated_messages and hasattr(updated_messages.media, 'document'):
-                                    document = updated_messages.media.document
-                                    file_location = InputDocumentFileLocation(
-                                        id=document.id,
-                                        access_hash=document.access_hash,
-                                        file_reference=document.file_reference,
-                                        thumb_size=''
-                                    )
-                                    print(f"✅ file_reference actualizado en range request")
-                            except Exception as ref_error:
-                                print(f"⚠️ Error actualizando file_reference en range: {ref_error}")
+                        # Calcular el rango exacto solicitado
+                        requested_end = start + chunk_size
+                        end = min(requested_end, file_size)
                         
-                        # Descargar SOLO el rango solicitado usando GetFileRequest
-                        # SOLUCIÓN SIMPLE: Usar offset exacto del Range HTTP, calcular limit como min(512KB, end - offset)
-                        # Avanzar offset por bytes reales descargados, bucle depende solo de offset < end
+                        # Limitar el tamaño máximo a descargar por request HTTP
+                        if (end - start) > MAX_HTTP_RESPONSE_SIZE:
+                            end = start + MAX_HTTP_RESPONSE_SIZE
+                            print(f"⚠️ Rango solicitado excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
+                        
+                        buffer = BytesIO()
+                        bytes_downloaded = 0
+                        target_bytes = end - start
+                        
+                        print(f"📥 Descargando rango usando iter_download: start={start}, end={end}, target_bytes={target_bytes}, file_size={file_size}", flush=True)
+                        
                         try:
-                            # Límite fijo y conservador para GetFileRequest (64KB = 65536 bytes)
-                            # Usar un tamaño fijo y pequeño reduce el riesgo de exceder remaining_size real
-                            FIXED_CHUNK_SIZE = 64 * 1024  # 64KB - múltiplo de 1024, más seguro
-                            
-                            # Límite máximo por request HTTP (5MB) - el navegador hará múltiples requests
-                            MAX_HTTP_RESPONSE_SIZE = 5 * 1024 * 1024  # 5MB
-                            
-                            # ESTRATEGIA: Dividir el video en dos mitades
-                            # Primero cargar la primera mitad, luego la segunda mitad
-                            video_half = file_size // 2
-                            # Umbral para empezar a precargar la segunda mitad (80% de la primera mitad)
-                            precache_threshold = int(video_half * 0.8)
-                            
-                            # Calcular el rango exacto solicitado
-                            requested_end = start + chunk_size
-                            
-                            # Si el rango solicitado está en la primera mitad
-                            if start < video_half:
-                                # Si estamos cerca del final de la primera mitad (más del 80%), permitir precargar un poco de la segunda mitad
-                                if start >= precache_threshold:
-                                    # Permitir cargar hasta el final de la primera mitad + un poco de la segunda mitad (10% de la segunda mitad)
-                                    max_end_first_half = video_half + int((file_size - video_half) * 0.1)
-                                    end = min(requested_end, max_end_first_half)
-                                    print(f"📦 Cerca del final de primera mitad (start={start} >= {precache_threshold}): permitiendo precarga hasta {end} (mitad: {video_half}, max_precache: {max_end_first_half})", flush=True)
-                                else:
-                                    # Estamos en la primera mitad, limitar al final de la primera mitad
-                                    end = min(requested_end, video_half)
-                                    print(f"📦 Primera mitad: limitando end a {end} (mitad del video: {video_half}, solicitado: {requested_end})", flush=True)
-                            else:
-                                # Estamos en la segunda mitad, permitir cargar normalmente
-                                end = requested_end
-                                print(f"📦 Segunda mitad: usando rango completo hasta {end}", flush=True)
-                            
-                            # Limitar el tamaño máximo a descargar por request HTTP (aplicar después de la lógica de mitades)
-                            if (end - start) > MAX_HTTP_RESPONSE_SIZE:
-                                end = start + MAX_HTTP_RESPONSE_SIZE
-                                print(f"⚠️ Rango solicitado excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
-                            
-                            buffer = BytesIO()
-                            # CRÍTICO: El offset DEBE ser múltiplo de 1024 según la API de Telegram
-                            # Redondear hacia abajo al múltiplo de 1024 más cercano
-                            aligned_offset = (int(start) // 1024) * 1024
-                            offset_adjustment = start - aligned_offset  # Bytes a saltar al inicio
-                            
-                            current_offset = aligned_offset
-                            chunks_downloaded = 0
-                            
-                            print(f"📥 Descargando rango: start={start}, end={end}, chunk_size={end - start}, file_size={file_size}, aligned_offset={aligned_offset}, offset_adjustment={offset_adjustment}", flush=True)
-                            
-                            # Bucle simple: mientras offset < end
-                            while current_offset < end:
-                                # Verificar si el buffer ya alcanzó el límite máximo
-                                current_buffer_size = buffer.tell()
-                                if current_buffer_size >= MAX_HTTP_RESPONSE_SIZE:
-                                    print(f"⚠️ Buffer alcanzó límite máximo ({MAX_HTTP_RESPONSE_SIZE} bytes), deteniendo descarga. El navegador hará múltiples requests.", flush=True)
-                                    break
-                                
-                                # Asegurar que current_offset SIEMPRE sea múltiplo de 1024
-                                if current_offset % 1024 != 0:
-                                    current_offset = (int(current_offset) // 1024) * 1024
-                                    print(f"⚠️ Ajustando offset a múltiplo de 1024: {current_offset}", flush=True)
-                                
-                                # Calcular cuántos bytes quedan por descargar en este rango
-                                remaining_in_range = end - current_offset
-                                
-                                # Usar un limit fijo y conservador (64KB) para evitar exceder remaining_size real
-                                # Si remaining_in_range es menor que 64KB, usar el tamaño exacto (redondeado a múltiplo de 1024)
-                                if remaining_in_range >= FIXED_CHUNK_SIZE:
-                                    limit = FIXED_CHUNK_SIZE  # 65536 bytes (64KB, múltiplo de 1024)
-                                elif remaining_in_range >= 1024:
-                                    # Redondear hacia abajo al múltiplo de 1024 más cercano
-                                    limit = (int(remaining_in_range) // 1024) * 1024
-                                else:
-                                    # Si es menor que 1024, usar el tamaño exacto
-                                    limit = int(remaining_in_range)
-                                
-                                # Asegurar que limit no sea 0
-                                if limit <= 0:
-                                    break
-                                
-                                # Verificación final: limit nunca debe exceder remaining_in_range
-                                if limit > remaining_in_range:
-                                    if remaining_in_range < 1024:
-                                        limit = int(remaining_in_range)
-                                    else:
-                                        limit = (int(remaining_in_range) // 1024) * 1024
-                                
-                                if limit <= 0:
-                                    break
-                                
-                                print(f"🔍 GetFileRequest: offset={current_offset}, limit={limit}, remaining_in_range={remaining_in_range}, end={end}, offset%1024={current_offset % 1024}, limit%1024={limit % 1024}", flush=True)
-                                
-                                try:
-                                    result = await client(GetFileRequest(
-                                        location=file_location,
-                                        offset=current_offset,
-                                        limit=limit
-                                    ))
-                                    
-                                    # Extraer los bytes del resultado con logging detallado
-                                    chunk_data = None
-                                    if hasattr(result, 'bytes'):
-                                        chunk_data = result.bytes
-                                        print(f"✅ Datos obtenidos de result.bytes: {len(chunk_data) if chunk_data else 0} bytes", flush=True)
-                                    elif hasattr(result, 'data'):
-                                        chunk_data = result.data
-                                        print(f"✅ Datos obtenidos de result.data: {len(chunk_data) if chunk_data else 0} bytes", flush=True)
-                                    elif isinstance(result, bytes):
-                                        chunk_data = result
-                                        print(f"✅ Datos obtenidos directamente como bytes: {len(chunk_data)} bytes", flush=True)
-                                    elif hasattr(result, '__bytes__'):
-                                        chunk_data = bytes(result)
-                                        print(f"✅ Datos obtenidos de __bytes__: {len(chunk_data)} bytes", flush=True)
-                                    else:
-                                        print(f"⚠️ Resultado de GetFileRequest no tiene estructura conocida: tipo={type(result).__name__}, atributos={[a for a in dir(result) if not a.startswith('_')]}", flush=True)
-                                    
-                                    if chunk_data and len(chunk_data) > 0:
-                                        buffer.write(chunk_data)
-                                        # Avanzar offset por la cantidad real de bytes descargados
-                                        current_offset += len(chunk_data)
-                                        chunks_downloaded += 1
-                                        remaining_in_range = end - current_offset
-                                        print(f"📊 Chunk {chunks_downloaded}: {len(chunk_data)} bytes descargados, {buffer.tell()} bytes en buffer, offset ahora={current_offset}, remaining_in_range={remaining_in_range}", flush=True)
-                                    else:
-                                        print(f"⚠️ Chunk vacío en offset {current_offset}, limit={limit}, terminando descarga", flush=True)
+                            # Usar iter_download que maneja automáticamente todos los detalles
+                            # Solo leeremos los bytes del rango solicitado
+                            async for chunk in client.iter_download(messages, offset=start, limit=target_bytes):
+                                if chunk:
+                                    # Solo agregar los bytes que necesitamos
+                                    remaining_needed = target_bytes - bytes_downloaded
+                                    if remaining_needed <= 0:
                                         break
-                                except Exception as chunk_error:
-                                    error_type = type(chunk_error).__name__
-                                    error_msg = str(chunk_error)
-                                    print(f"❌ Error en GetFileRequest: offset={current_offset}, limit={limit}, error={error_type}: {error_msg}", flush=True)
                                     
-                                    # Si es un error de limit, intentar con chunks progresivamente más pequeños
-                                    if 'limit' in error_msg.lower() or 'LimitInvalid' in error_type:
-                                        remaining_in_range = end - current_offset
-                                        
-                                        # Intentar con tamaños progresivamente más pequeños: 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
-                                        retry_sizes = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]
-                                        
-                                        for retry_size in retry_sizes:
-                                            if retry_size > remaining_in_range:
-                                                continue
-                                            
-                                            # Si es >= 1024, debe ser múltiplo de 1024
-                                            if retry_size >= 1024:
-                                                retry_limit = (int(remaining_in_range) // 1024) * 1024
-                                                if retry_limit == 0:
-                                                    retry_limit = 1024
-                                                retry_limit = min(retry_limit, retry_size)
-                                            else:
-                                                # Si es < 1024, usar el tamaño exacto o el remaining_in_range, lo que sea menor
-                                                retry_limit = min(retry_size, int(remaining_in_range))
-                                            
-                                            if retry_limit <= 0:
-                                                continue
-                                            
-                                            try:
-                                                print(f"🔄 Reintentando con limit={retry_limit} (intento con tamaño base={retry_size}, remaining_in_range={remaining_in_range}, offset={current_offset})", flush=True)
-                                                result = await client(GetFileRequest(
-                                                    location=file_location,
-                                                    offset=current_offset,
-                                                    limit=retry_limit
-                                                ))
-                                                chunk_data = None
-                                                if hasattr(result, 'bytes'):
-                                                    chunk_data = result.bytes
-                                                elif hasattr(result, 'data'):
-                                                    chunk_data = result.data
-                                                elif isinstance(result, bytes):
-                                                    chunk_data = result
-                                                elif hasattr(result, '__bytes__'):
-                                                    chunk_data = bytes(result)
-                                                
-                                                if chunk_data and len(chunk_data) > 0:
-                                                    buffer.write(chunk_data)
-                                                    # Avanzar offset por la cantidad real de bytes descargados
-                                                    current_offset += len(chunk_data)
-                                                    chunks_downloaded += 1
-                                                    print(f"✅ Reintento exitoso con limit={retry_limit}: {len(chunk_data)} bytes descargados", flush=True)
-                                                    break  # Salir del bucle de retry_sizes
-                                            except Exception as retry_error:
-                                                retry_error_type = type(retry_error).__name__
-                                                retry_error_msg = str(retry_error)
-                                                # Si es otro LimitInvalidError, continuar con el siguiente tamaño
-                                                if 'limit' in retry_error_msg.lower() or 'LimitInvalid' in retry_error_type:
-                                                    print(f"⚠️ Reintento con limit={retry_limit} también falló, probando tamaño más pequeño...", flush=True)
-                                                    continue
-                                                else:
-                                                    # Si es otro tipo de error, no continuar
-                                                    print(f"❌ Reintento falló con error diferente: {retry_error}", flush=True)
-                                                    break
-                                        else:
-                                            # Si todos los reintentos fallaron
-                                            print(f"❌ Todos los reintentos fallaron, no se pudo descargar desde offset={current_offset}", flush=True)
+                                    chunk_to_add = chunk[:remaining_needed]
+                                    buffer.write(chunk_to_add)
+                                    bytes_downloaded += len(chunk_to_add)
                                     
-                                    # Si no es un error de limit o el reintento falló, lanzar el error
-                                    raise
+                                    print(f"📊 Chunk descargado: {len(chunk_to_add)} bytes, total en buffer: {bytes_downloaded}/{target_bytes}", flush=True)
+                                    
+                                    # Si alcanzamos el límite HTTP, detener
+                                    if bytes_downloaded >= MAX_HTTP_RESPONSE_SIZE:
+                                        print(f"⚠️ Alcanzado límite HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), deteniendo descarga. El navegador hará múltiples requests.", flush=True)
+                                        break
+                                    
+                                    if bytes_downloaded >= target_bytes:
+                                        break
                             
-                            # Devolver los datos descargados
-                            total_downloaded = buffer.tell()
-                            print(f"✅ Descarga completada: {chunks_downloaded} chunks, {total_downloaded} bytes totales, offset final={current_offset}, offset_adjustment={offset_adjustment}", flush=True)
+                            print(f"✅ Descarga completada: {bytes_downloaded} bytes descargados", flush=True)
                             
-                            if total_downloaded > 0:
+                            if bytes_downloaded > 0:
                                 buffer.seek(0)
                                 data = buffer.read()
-                                
-                                # Si el offset fue ajustado, saltar los bytes iniciales
-                                if offset_adjustment > 0 and offset_adjustment < len(data):
-                                    data = data[offset_adjustment:]
-                                    print(f"✂️ Saltando {offset_adjustment} bytes iniciales debido a alineación de offset", flush=True)
                                 
                                 # Limitar al tamaño solicitado
                                 if len(data) > chunk_size:
@@ -3069,120 +2876,18 @@ def get_video(video_id):
                                     print(f"✅ Devolviendo {len(data)} bytes al cliente", flush=True)
                                     return data
                             
-                            print(f"❌ No se descargó ningún dato (buffer.tell()={total_downloaded})", flush=True)
+                            print(f"❌ No se descargó ningún dato (bytes_downloaded={bytes_downloaded})", flush=True)
                             raise Exception("No se pudo descargar ningún chunk del rango solicitado")
-                            
-                            # El resultado de GetFileRequest puede tener diferentes estructuras
-                            # Intentamos obtener los bytes de diferentes maneras
-                            data = None
-                            if hasattr(result, 'bytes'):
-                                data = result.bytes
-                            elif hasattr(result, 'data'):
-                                data = result.data
-                            elif isinstance(result, bytes):
-                                data = result
-                            elif hasattr(result, '__bytes__'):
-                                data = bytes(result)
-                            
-                            if data and len(data) > 0:
-                                return data
-                            else:
-                                # Fallback: intentar con chunks más pequeños
-                                chunk_limit = min(1024 * 1024, chunk_size)  # Máximo 1MB por chunk
-                                buffer = BytesIO()
-                                current_offset = start
-                                remaining = chunk_size
-                                
-                                while remaining > 0:
-                                    current_chunk_size = min(chunk_limit, remaining)
-                                    # Asegurar que el limit sea múltiplo de 1024 y no exceda remaining
-                                    valid_chunk_limit = get_valid_limit(current_chunk_size)
-                                    
-                                    # CRÍTICO: Asegurar que no exceda remaining
-                                    if valid_chunk_limit > remaining:
-                                        valid_chunk_limit = (remaining // 1024) * 1024
-                                        if valid_chunk_limit < 1024 and remaining > 0:
-                                            valid_chunk_limit = remaining
-                                        elif valid_chunk_limit < 1024:
-                                            valid_chunk_limit = 1024
-                                    
-                                    try:
-                                        result = await client(GetFileRequest(
-                                            location=file_location,
-                                            offset=current_offset,
-                                            limit=valid_chunk_limit
-                                        ))
-                                        chunk_data = None
-                                        if hasattr(result, 'bytes'):
-                                            chunk_data = result.bytes
-                                        elif hasattr(result, 'data'):
-                                            chunk_data = result.data
-                                        elif isinstance(result, bytes):
-                                            chunk_data = result
-                                        
-                                        if chunk_data and len(chunk_data) > 0:
-                                            buffer.write(chunk_data)
-                                            current_offset += len(chunk_data)
-                                            remaining -= len(chunk_data)
-                                        else:
-                                            break
-                                    except Exception:
-                                        break
-                                
-                                if buffer.tell() > 0:
-                                    buffer.seek(0)
-                                    return buffer.read()
-                                else:
-                                    raise Exception("No se pudo descargar ningún chunk del rango solicitado")
                         except Exception as e:
                             error_msg = str(e)
                             error_type = type(e).__name__
-                            print(f"❌ Error con GetFileRequest en range: {error_type}: {error_msg}")
+                            print(f"❌ Error con iter_download en range: {error_type}: {error_msg}", flush=True)
                             import traceback
                             traceback_str = traceback.format_exc()
-                            print(traceback_str)
-                            
-                            # 🚀 OPTIMIZADO: Si el error es de file_reference obsoleto, intentar actualizarlo con reintentos
-                            if 'file_reference' in error_msg.lower() or 'FILE_REFERENCE' in str(e) or 'FILE_REFERENCE_EXPIRED' in str(e) or 'expired' in error_msg.lower():
-                                print(f"🔄 Error de file_reference en range, intentando actualizar mensaje...")
-                                try:
-                                    updated_messages = await client.get_messages(target_chat, ids=message_id)
-                                    if updated_messages and hasattr(updated_messages.media, 'document'):
-                                        document = updated_messages.media.document
-                                        file_location = InputDocumentFileLocation(
-                                            id=document.id,
-                                            access_hash=document.access_hash,
-                                            file_reference=document.file_reference,
-                                            thumb_size=''
-                                        )
-                                        print(f"✅ file_reference actualizado en range, reintentando GetFileRequest...")
-                                        # Reintentar con file_reference actualizado
-                                        retry_limit = get_valid_limit(min(1024 * 1024, chunk_size))
-                                        result = await client(GetFileRequest(
-                                            location=file_location,
-                                            offset=start,
-                                            limit=retry_limit
-                                        ))
-                                        data = None
-                                        if hasattr(result, 'bytes'):
-                                            data = result.bytes
-                                        elif hasattr(result, 'data'):
-                                            data = result.data
-                                        elif isinstance(result, bytes):
-                                            data = result
-                                        
-                                        if data and len(data) > 0:
-                                            print(f"✅ GetFileRequest range exitoso después de actualizar file_reference: {len(data)} bytes")
-                                            return data
-                                except Exception as retry_error:
-                                    print(f"⚠️ Error en reintento con file_reference actualizado en range: {retry_error}")
-                            
-                            # Para videos muy grandes, NO intentar descargar todo - solo lanzar error descriptivo
-                            if file_size > 1024 * 1024 * 1024:  # > 1GB
-                                raise Exception(f"No se pudo descargar el rango del video. El video es muy grande ({file_size / (1024*1024*1024):.2f}GB) y requiere streaming progresivo. Error: {error_type}: {error_msg}")
-                            else:
-                                raise Exception(f"Error descargando rango del video: {error_type}: {error_msg}")
-                    return None
+                            print(traceback_str, flush=True)
+                            raise
+                    else:
+                        raise Exception("El mensaje no tiene documento")
                 
                 # 🚀 OPTIMIZADO: Timeout dinámico para range requests
                 # Aumentado para videos grandes y de alta calidad

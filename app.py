@@ -2566,7 +2566,7 @@ def get_video_thumbnail(video_id):
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/video/<video_id>')
+@app.route('/api/video/<video_id>', methods=['GET', 'HEAD', 'OPTIONS'])
 def get_video(video_id):
     """Obtener el video directamente desde la nube de Telegram (sin caché)"""
     import sys
@@ -2576,8 +2576,17 @@ def get_video(video_id):
     sys.stdout.flush()
     sys.stderr.flush()
     
+    # Manejar OPTIONS request (preflight CORS)
+    if request.method == 'OPTIONS':
+        return '', 200, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range, Content-Range, Content-Length',
+            'Access-Control-Max-Age': '3600',
+        }
+    
     try:
-        print(f"🎬 Solicitud de video: {video_id}", flush=True)
+        print(f"🎬 Solicitud de video: {video_id} (método: {request.method})", flush=True)
         print(f"🔍 Request headers: {dict(request.headers)}", flush=True)
         print(f"🔍 Session data: {dict(session)}", flush=True)
         # Verificar si hay range request
@@ -3042,16 +3051,32 @@ def get_video(video_id):
             # 🚀 OPTIMIZADO: Para videos pesados, usar chunks iniciales MÁS PEQUEÑOS
             # Esto permite que el navegador empiece a reproducir más rápido
             # El navegador hará range requests automáticamente para el resto
-            if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB (muy pesados)
-                initial_size = min(5 * 1024 * 1024, file_size)  # 5MB - más pequeño para respuesta rápida
-            elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
-                initial_size = min(3 * 1024 * 1024, file_size)  # 3MB para videos grandes
-            elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
-                initial_size = min(2 * 1024 * 1024, file_size)  # 2MB
-            elif file_size > 10 * 1024 * 1024:  # Videos > 10MB
-                initial_size = min(1024 * 1024, file_size)  # 1MB
+            # Detectar si es un navegador móvil para usar chunks más pequeños
+            user_agent = request.headers.get('User-Agent', '').lower()
+            is_mobile = any(mobile in user_agent for mobile in ['mobile', 'android', 'iphone', 'ipad', 'ipod'])
+            
+            # Para móviles, usar chunks más pequeños para mejor compatibilidad
+            if is_mobile:
+                if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB
+                    initial_size = min(2 * 1024 * 1024, file_size)  # 2MB para móviles
+                elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
+                    initial_size = min(1024 * 1024, file_size)  # 1MB para móviles
+                elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
+                    initial_size = min(512 * 1024, file_size)  # 512KB para móviles
+                else:
+                    initial_size = min(256 * 1024, file_size)  # 256KB para videos pequeños en móviles
+                print(f"📱 Navegador móvil detectado, usando chunk inicial de {initial_size / 1024:.0f}KB", flush=True)
             else:
-                initial_size = min(512 * 1024, file_size)  # 512KB para videos pequeños
+                if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB (muy pesados)
+                    initial_size = min(5 * 1024 * 1024, file_size)  # 5MB - más pequeño para respuesta rápida
+                elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
+                    initial_size = min(3 * 1024 * 1024, file_size)  # 3MB para videos grandes
+                elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
+                    initial_size = min(2 * 1024 * 1024, file_size)  # 2MB
+                elif file_size > 10 * 1024 * 1024:  # Videos > 10MB
+                    initial_size = min(1024 * 1024, file_size)  # 1MB
+                else:
+                    initial_size = min(512 * 1024, file_size)  # 512KB para videos pequeños
             
             print(f"📊 Descargando chunk inicial de {initial_size / (1024*1024):.2f}MB para video de {file_size / (1024*1024):.2f}MB ({file_size / (1024*1024*1024):.2f}GB)")
             
@@ -3298,6 +3323,24 @@ def get_video(video_id):
                 }), 500
             
             if initial_data:
+                # Si es HEAD request, solo devolver headers sin contenido
+                if request.method == 'HEAD':
+                    range_end = len(initial_data) - 1
+                    if range_end < 0:
+                        range_end = 0
+                    
+                    headers = {
+                        **base_headers,
+                        'Content-Length': str(file_size),  # Para HEAD, usar tamaño completo
+                        'Content-Range': f'bytes 0-{range_end}/{file_size}',
+                    }
+                    
+                    if len(initial_data) >= file_size:
+                        headers.pop('Content-Range', None)
+                        return Response('', 200, headers, mimetype=mime_type)
+                    else:
+                        return Response('', 206, headers, mimetype=mime_type)
+                
                 # Calcular el rango correcto
                 range_end = len(initial_data) - 1
                 if range_end < 0:

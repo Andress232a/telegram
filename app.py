@@ -2865,10 +2865,15 @@ def get_video(video_id):
                                 print(f"⚠️ Rango solicitado ({chunk_size} bytes) excede máximo HTTP ({MAX_HTTP_RESPONSE_SIZE} bytes), limitando a {MAX_HTTP_RESPONSE_SIZE} bytes. El navegador hará múltiples requests.", flush=True)
                             
                             buffer = BytesIO()
-                            current_offset = start  # Usar offset exacto, sin redondear
+                            # CRÍTICO: El offset DEBE ser múltiplo de 1024 según la API de Telegram
+                            # Redondear hacia abajo al múltiplo de 1024 más cercano
+                            aligned_offset = (int(start) // 1024) * 1024
+                            offset_adjustment = start - aligned_offset  # Bytes a saltar al inicio
+                            
+                            current_offset = aligned_offset
                             chunks_downloaded = 0
                             
-                            print(f"📥 Descargando rango: start={start}, end={end}, chunk_size={end - start}, file_size={file_size}", flush=True)
+                            print(f"📥 Descargando rango: start={start}, end={end}, chunk_size={end - start}, file_size={file_size}, aligned_offset={aligned_offset}, offset_adjustment={offset_adjustment}", flush=True)
                             
                             # Bucle simple: mientras offset < end
                             while current_offset < end:
@@ -2877,6 +2882,11 @@ def get_video(video_id):
                                 if current_buffer_size >= MAX_HTTP_RESPONSE_SIZE:
                                     print(f"⚠️ Buffer alcanzó límite máximo ({MAX_HTTP_RESPONSE_SIZE} bytes), deteniendo descarga. El navegador hará múltiples requests.", flush=True)
                                     break
+                                
+                                # Asegurar que current_offset SIEMPRE sea múltiplo de 1024
+                                if current_offset % 1024 != 0:
+                                    current_offset = (int(current_offset) // 1024) * 1024
+                                    print(f"⚠️ Ajustando offset a múltiplo de 1024: {current_offset}", flush=True)
                                 
                                 # Calcular cuántos bytes quedan por descargar en este rango
                                 remaining_in_range = end - current_offset
@@ -2898,7 +2908,7 @@ def get_video(video_id):
                                 
                                 # Asegurar que limit no exceda remaining_in_range
                                 if limit > remaining_in_range:
-                                    limit = int(remaining_in_range)
+                                    limit = int(remaining_in_range) if remaining_in_range < 1024 else ((int(remaining_in_range) // 1024) * 1024)
                                 
                                 # Asegurar que limit sea múltiplo de 1024 si es >= 1024
                                 if limit >= 1024 and (limit % 1024) != 0:
@@ -2995,11 +3005,16 @@ def get_video(video_id):
                             
                             # Devolver los datos descargados
                             total_downloaded = buffer.tell()
-                            print(f"✅ Descarga completada: {chunks_downloaded} chunks, {total_downloaded} bytes totales, offset final={current_offset}", flush=True)
+                            print(f"✅ Descarga completada: {chunks_downloaded} chunks, {total_downloaded} bytes totales, offset final={current_offset}, offset_adjustment={offset_adjustment}", flush=True)
                             
                             if total_downloaded > 0:
                                 buffer.seek(0)
                                 data = buffer.read()
+                                
+                                # Si el offset fue ajustado, saltar los bytes iniciales
+                                if offset_adjustment > 0 and offset_adjustment < len(data):
+                                    data = data[offset_adjustment:]
+                                    print(f"✂️ Saltando {offset_adjustment} bytes iniciales debido a alineación de offset", flush=True)
                                 
                                 # Limitar al tamaño solicitado
                                 if len(data) > chunk_size:

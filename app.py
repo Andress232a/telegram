@@ -2456,6 +2456,8 @@ def get_video_thumbnail(video_id):
     # Primero intentar usar sesión activa (para mantener compatibilidad)
     # Si no hay sesión, usar configuración guardada (para thumbnails públicos compartidos)
     phone = session.get('phone')
+    saved_config = None
+    
     if not phone:
         print(f"⚠️ No hay sesión activa para thumbnail, intentando usar configuración guardada...")
         try:
@@ -2466,6 +2468,8 @@ def get_video_thumbnail(video_id):
                     if phone:
                         print(f"📱 Usando configuración guardada del servidor para thumbnail público: {phone}")
                         # Cargar también api_id, api_hash y session_name en la sesión temporalmente
+                        # CRÍTICO: Asegurar que Flask cree una sesión si no existe
+                        session.permanent = True
                         session['phone'] = phone
                         session['api_id'] = saved_config.get('api_id')
                         session['api_hash'] = saved_config.get('api_hash')
@@ -2479,6 +2483,13 @@ def get_video_thumbnail(video_id):
         return jsonify({'error': 'No se pudo acceder al video. Por favor, inicia sesión o verifica la configuración del servidor.'}), 401
     
     try:
+        # Si cargamos desde configuración guardada y no hay sesión válida, 
+        # forzar que los valores estén disponibles
+        if saved_config and not session.get('api_id'):
+            session['api_id'] = saved_config.get('api_id')
+            session['api_hash'] = saved_config.get('api_hash')
+            session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
+        
         client = get_or_create_client(phone)
         if not client or not client.is_connected():
             return jsonify({'error': 'No se pudo conectar a Telegram'}), 500
@@ -2599,6 +2610,8 @@ def get_video(video_id):
         # Primero intentar usar sesión activa (para mantener compatibilidad)
         # Si no hay sesión, usar configuración guardada (para videos públicos compartidos)
         phone = session.get('phone')
+        saved_config = None
+        
         if not phone:
             print(f"⚠️ No hay sesión activa para video {video_id}, intentando usar configuración guardada...")
             try:
@@ -2610,6 +2623,8 @@ def get_video(video_id):
                             print(f"📱 Usando configuración guardada del servidor para video público: {phone}")
                             # Cargar también api_id, api_hash y session_name en la sesión temporalmente
                             # para que get_or_create_client pueda usarlos
+                            # CRÍTICO: Asegurar que Flask cree una sesión si no existe
+                            session.permanent = True
                             session['phone'] = phone
                             session['api_id'] = saved_config.get('api_id')
                             session['api_hash'] = saved_config.get('api_hash')
@@ -2632,8 +2647,16 @@ def get_video(video_id):
             }), 401
         
         # Obtener cliente de Telegram (phone ya está obtenido de sesión o configuración guardada)
+        # Si usamos configuración guardada, asegurarnos de que los valores estén en la sesión
         try:
             print(f"🔌 Intentando obtener cliente de Telegram para {phone}...")
+            # Si cargamos desde configuración guardada y no hay sesión válida, 
+            # forzar que los valores estén disponibles
+            if saved_config and not session.get('api_id'):
+                session['api_id'] = saved_config.get('api_id')
+                session['api_hash'] = saved_config.get('api_hash')
+                session['session_name'] = saved_config.get('session_name', f"sessions/{secure_filename(phone)}")
+            
             client = get_or_create_client(phone)
             if not client:
                 print(f"❌ No se pudo obtener cliente de Telegram para {phone}")

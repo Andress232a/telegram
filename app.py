@@ -2912,7 +2912,7 @@ def get_video(video_id):
         # Obtener chat_id y message_id para usar en las funciones anidadas
         chat_id = video_info.get('chat_id', 'me')
         message_id = video_info['message_id']
-        target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+        target_chat_initial = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
         
         # Verificar que el cliente esté autenticado antes de intentar obtener mensajes
         try:
@@ -2931,6 +2931,8 @@ def get_video(video_id):
         
         # Obtener información del mensaje y el archivo
         async def get_video_info():
+            # Definir target_chat al inicio de la función
+            target_chat = target_chat_initial
             print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
             
             # 🚀 FIX: Para canales, obtener la entidad primero

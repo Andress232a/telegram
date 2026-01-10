@@ -899,7 +899,18 @@ def get_video_link():
         client_loop = client._loop
         
         async def get_message_info():
-            target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+            # 🚀 FIX: Para canales, obtener la entidad primero
+            try:
+                if chat_id != 'me' and str(chat_id).isdigit():
+                    target_entity = await client.get_entity(int(chat_id))
+                    print(f"✅ Entidad obtenida para chat_id {chat_id}: {type(target_entity).__name__}")
+                    target_chat = target_entity
+                else:
+                    target_chat = 'me'
+            except Exception as entity_error:
+                print(f"⚠️ No se pudo obtener entidad para {chat_id}, usando directamente: {entity_error}")
+                target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+            
             message = await client.get_messages(target_chat, ids=message_id)
             return message
         
@@ -1560,7 +1571,17 @@ def get_messages(chat_id):
         async def fetch_messages():
             messages = []
             try:
-                async for message in client.iter_messages(int(chat_id), limit=limit):
+                # 🚀 FIX: Para canales, usar get_entity primero para obtener la entidad correcta
+                try:
+                    # Intentar obtener como entidad primero (necesario para canales)
+                    target_entity = await client.get_entity(int(chat_id))
+                    print(f"✅ Entidad obtenida para chat_id {chat_id}: {type(target_entity).__name__}")
+                except Exception as entity_error:
+                    # Si falla get_entity, intentar con el chat_id directamente (para chats normales)
+                    print(f"⚠️ No se pudo obtener entidad para {chat_id}, usando directamente: {entity_error}")
+                    target_entity = int(chat_id)
+                
+                async for message in client.iter_messages(target_entity, limit=limit):
                     msg_info = {
                         'id': message.id,
                         'text': message.text or '',
@@ -1652,8 +1673,12 @@ def get_messages(chat_id):
                                             
                                             # Obtener mensaje
                                             async def get_msg():
-                                                target_chat_preload = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
-                                                return await client_preload.get_messages(target_chat_preload, ids=message.id)
+                                                # 🚀 FIX: Usar la misma lógica de get_entity para canales
+                                                try:
+                                                    target_entity_preload = await client_preload.get_entity(int(chat_id))
+                                                except:
+                                                    target_entity_preload = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+                                                return await client_preload.get_messages(target_entity_preload, ids=message.id)
                                             
                                             msg_preload = run_async(get_msg(), client_loop_preload, timeout=30)
                                             
@@ -2872,6 +2897,17 @@ def get_video(video_id):
         async def get_video_info():
             print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
             
+            # 🚀 FIX: Para canales, obtener la entidad primero
+            try:
+                # Si target_chat es un número, intentar obtener como entidad (necesario para canales)
+                if isinstance(target_chat, int) or (isinstance(target_chat, str) and target_chat.isdigit()):
+                    target_entity = await client.get_entity(int(target_chat))
+                    print(f"✅ Entidad obtenida para chat {target_chat}: {type(target_entity).__name__}")
+                    target_chat = target_entity
+            except Exception as entity_error:
+                print(f"⚠️ No se pudo obtener entidad para {target_chat}, usando directamente: {entity_error}")
+                # Continuar con target_chat original
+            
             # Intentar obtener el mensaje específico
             messages = await client.get_messages(target_chat, ids=message_id)
             
@@ -2879,7 +2915,7 @@ def get_video(video_id):
             if not messages:
                 print(f"⚠️ Mensaje {message_id} no encontrado directamente, buscando en mensajes recientes...")
                 try:
-                    # Buscar en los últimos 100 mensajes del chat
+                    # Buscar en los últimos 100 mensajes del chat (ya tenemos target_chat como entidad)
                     async for message in client.iter_messages(target_chat, limit=100):
                         if message.id == message_id and message.media:
                             messages = message
@@ -2887,6 +2923,8 @@ def get_video(video_id):
                             break
                 except Exception as e:
                     print(f"⚠️ Error buscando mensaje: {e}")
+                    import traceback
+                    print(traceback.format_exc())
             
             if not messages:
                 print(f"⚠️ Mensaje {message_id} no encontrado en chat {target_chat}")

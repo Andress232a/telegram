@@ -1104,7 +1104,8 @@
                 return;
             }
             
-            container.innerHTML = messages.reverse().map(msg => {
+            // 🚀 FIX: Renderizar mensajes y luego forzar carga de miniaturas
+            const messagesHtml = messages.reverse().map(msg => {
                 const time = msg.date ? new Date(msg.date * 1000).toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'}) : '';
                 const isOwn = msg.from_id === null || msg.from_id === 'None';
                 
@@ -1156,14 +1157,25 @@
                             <img id="${videoElementId}-thumbnail" 
                                  src="${thumbnailUrl}" 
                                  loading="eager"
+                                 decoding="async"
                                  style="
                                      width: 100%;
                                      height: auto;
                                      display: block;
                                      max-height: 500px;
                                      object-fit: cover;
+                                     min-height: 200px;
+                                     background: #1a1a1a;
                                  "
-                                 onerror="console.error('Error cargando miniatura para video ${videoIdForThumbnail}'); this.style.display='none'; const videoEl = document.getElementById('${videoElementId}'); if (videoEl) videoEl.style.display='block';"
+                                 onerror="
+                                     console.error('❌ Error cargando miniatura para video ${videoIdForThumbnail}');
+                                     // Intentar cargar de nuevo con timestamp diferente
+                                     const img = this;
+                                     setTimeout(() => {
+                                         const retryUrl = '/api/video/${videoIdForThumbnail}/thumbnail?_t=' + Date.now();
+                                         img.src = retryUrl;
+                                     }, 500);
+                                 "
                                  onload="console.log('✅ Miniatura cargada para video ${videoIdForThumbnail}');"
                                  alt="Video thumbnail">
                             <video
@@ -1227,26 +1239,34 @@
                 `;
             }).join('');
             
-            // Precargar todas las miniaturas de una vez (como Telegram Web)
-            // Esto asegura que todas las miniaturas se carguen rápidamente
+            // 🚀 FIX: Asignar HTML al contenedor y luego forzar carga de miniaturas
+            container.innerHTML = messagesHtml;
+            
+            // Forzar carga de todas las miniaturas inmediatamente después de renderizar
+            // Esto resuelve el problema de videos que no aparecen inicialmente
             setTimeout(() => {
                 const thumbnails = container.querySelectorAll('img[id$="-thumbnail"]');
-                console.log(`🖼️ Precargando ${thumbnails.length} miniaturas...`);
+                console.log(`🖼️ Forzando carga de ${thumbnails.length} miniaturas...`);
                 thumbnails.forEach((img, index) => {
-                    // Forzar carga de la miniatura si no se ha cargado
-                    if (!img.complete || img.naturalHeight === 0) {
-                        const originalSrc = img.src;
-                        // Agregar timestamp si no lo tiene para evitar caché
-                        if (!originalSrc.includes('_t=')) {
-                            img.src = originalSrc + (originalSrc.includes('?') ? '&' : '?') + '_t=' + Date.now();
-                        }
-                        console.log(`📥 Precargando miniatura ${index + 1}/${thumbnails.length}:`, img.src);
+                    // Forzar carga inmediata de la miniatura
+                    if (img.src && (!img.complete || img.naturalHeight === 0)) {
+                        // Usar requestAnimationFrame para asegurar que el DOM está listo
+                        requestAnimationFrame(() => {
+                            // Si la imagen no se ha cargado, forzar recarga
+                            const originalSrc = img.src.split('?')[0]; // Sin parámetros
+                            const newSrc = originalSrc + '?_t=' + (Date.now() + index); // Timestamp único por imagen
+                            img.src = newSrc;
+                            img.loading = 'eager'; // Forzar carga eager
+                            console.log(`📥 Forzando carga de miniatura ${index + 1}/${thumbnails.length}`);
+                        });
                     }
                 });
-            }, 100);
+            }, 50); // Reducido a 50ms para carga más rápida
             
             // Scroll al final
-            container.scrollTop = container.scrollHeight;
+            setTimeout(() => {
+                container.scrollTop = container.scrollHeight;
+            }, 100);
         }
         
         function showContextMenu(event, videoUrl) {

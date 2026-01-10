@@ -3150,29 +3150,18 @@ def get_video(video_id):
             user_agent = request.headers.get('User-Agent', '').lower()
             is_mobile = any(mobile in user_agent for mobile in ['mobile', 'android', 'iphone', 'ipad', 'ipod'])
             
-            # 🚀 OPTIMIZADO: Chunks iniciales más pequeños para carga rápida (3-4 segundos en lugar de 9)
-            # El navegador hará range requests automáticamente para el resto del video
+            # 🚀 OPTIMIZACIÓN MÁXIMA: Chunks iniciales mínimos para carga ultra rápida (1-2 segundos)
+            # Límite práctico: ~128KB es el mínimo necesario para que el navegador inicie reproducción
+            # (necesita headers del contenedor MP4/WebM + metadata del codec)
+            # Si reducimos más, algunos videos podrían no iniciar correctamente
             if is_mobile:
-                if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB
-                    initial_size = min(256 * 1024, file_size)  # 256KB para móviles - carga ultra rápida
-                elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
-                    initial_size = min(256 * 1024, file_size)  # 256KB para móviles
-                elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
-                    initial_size = min(256 * 1024, file_size)  # 256KB para móviles
-                else:
-                    initial_size = min(256 * 1024, file_size)  # 256KB para videos pequeños en móviles
+                # Móviles: 128KB - balance óptimo entre velocidad y compatibilidad
+                initial_size = min(128 * 1024, file_size)  # 128KB mínimo necesario
                 print(f"📱 Navegador móvil detectado, usando chunk inicial de {initial_size / 1024:.0f}KB", flush=True)
             else:
-                if file_size > 2 * 1024 * 1024 * 1024:  # Videos > 2GB (muy pesados)
-                    initial_size = min(512 * 1024, file_size)  # 512KB - carga rápida
-                elif file_size > 500 * 1024 * 1024:  # Videos > 500MB
-                    initial_size = min(512 * 1024, file_size)  # 512KB para videos grandes
-                elif file_size > 50 * 1024 * 1024:  # Videos > 50MB
-                    initial_size = min(512 * 1024, file_size)  # 512KB
-                elif file_size > 10 * 1024 * 1024:  # Videos > 10MB
-                    initial_size = min(512 * 1024, file_size)  # 512KB
-                else:
-                    initial_size = min(512 * 1024, file_size)  # 512KB para videos pequeños
+                # Desktop: 128KB - suficiente para iniciar y máximo rendimiento
+                initial_size = min(128 * 1024, file_size)  # 128KB mínimo necesario
+                print(f"💻 Desktop detectado, usando chunk inicial de {initial_size / 1024:.0f}KB", flush=True)
             
             print(f"📊 Descargando chunk inicial de {initial_size / (1024*1024):.2f}MB para video de {file_size / (1024*1024):.2f}MB ({file_size / (1024*1024*1024):.2f}GB)")
             

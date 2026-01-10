@@ -266,6 +266,7 @@ def get_db_connection():
 def get_video_from_db(video_id):
     """Obtener información de un video desde MySQL"""
     try:
+        print(f"🔍 [get_video_from_db] Buscando video_id en DB: '{video_id}' (tipo: {type(video_id)}, longitud: {len(video_id) if video_id else 0})", flush=True)
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -274,6 +275,7 @@ def get_video_from_db(video_id):
                 )
                 result = cursor.fetchone()
                 if result:
+                    print(f"✅ [get_video_from_db] Video encontrado: video_id={result['video_id']}, chat_id={result['chat_id']}, message_id={result['message_id']}", flush=True)
                     return {
                         'message_id': result['message_id'],
                         'chat_id': result['chat_id'],
@@ -282,6 +284,8 @@ def get_video_from_db(video_id):
                         'file_size': result.get('file_size'),
                         'phone': None  # No almacenamos phone en la tabla, se obtiene de otra forma
                     }
+                else:
+                    print(f"❌ [get_video_from_db] Video NO encontrado en DB: '{video_id}'", flush=True)
                 return None
     except pymysql.Error as db_error:
         error_type = type(db_error).__name__
@@ -328,6 +332,7 @@ def find_video_by_message(chat_id, message_id, phone):
 def save_video_to_db(video_id, chat_id, message_id, filename, timestamp, file_size=None):
     """Guardar o actualizar video en MySQL"""
     try:
+        print(f"💾 [save_video_to_db] Guardando video: video_id='{video_id}', chat_id='{chat_id}', message_id={message_id}, filename='{filename}'", flush=True)
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # Verificar si existe
@@ -335,6 +340,7 @@ def save_video_to_db(video_id, chat_id, message_id, filename, timestamp, file_si
                 exists = cursor.fetchone()
                 
                 if exists:
+                    print(f"🔄 [save_video_to_db] Video existe, actualizando: video_id='{video_id}'", flush=True)
                     # Actualizar
                     cursor.execute(
                         """UPDATE videos SET chat_id = %s, message_id = %s, filename = %s, 
@@ -343,6 +349,7 @@ def save_video_to_db(video_id, chat_id, message_id, filename, timestamp, file_si
                         (str(chat_id), message_id, filename, timestamp, file_size, video_id)
                     )
                 else:
+                    print(f"🆕 [save_video_to_db] Video NO existe, insertando nuevo: video_id='{video_id}'", flush=True)
                     # Insertar nuevo
                     cursor.execute(
                         """INSERT INTO videos (video_id, chat_id, message_id, filename, timestamp, file_size) 
@@ -350,9 +357,12 @@ def save_video_to_db(video_id, chat_id, message_id, filename, timestamp, file_si
                         (video_id, str(chat_id), message_id, filename, timestamp, file_size)
                     )
                 conn.commit()
+                print(f"✅ [save_video_to_db] Video guardado exitosamente: video_id='{video_id}'", flush=True)
                 return True
     except Exception as e:
-        print(f"❌ Error guardando video en DB: {e}")
+        print(f"❌ [save_video_to_db] Error guardando video en DB: {e}", flush=True)
+        import traceback
+        print(traceback.format_exc(), flush=True)
         return False
 
 def get_all_videos_from_db():
@@ -1647,20 +1657,25 @@ def get_messages(chat_id):
                                     timestamp = message.date.timestamp() if message.date else time.time()
                                     file_size = doc.size if hasattr(doc, 'size') else None
                                     
-                                    print(f"🆕 Creando nuevo video: chat_id={chat_id_str}, message_id={message.id}, video_id={video_id}")
+                                    print(f"🆕 [FETCH] Creando nuevo video: chat_id={chat_id_str}, message_id={message.id}, video_id={video_id}", flush=True)
                                     if save_video_to_db(video_id, chat_id_str, message.id, filename, timestamp, file_size):
                                         existing_video_id = video_id
-                                        print(f"✅ Video nuevo registrado: Message={message.id}, Chat={chat_id_str}, VideoID={existing_video_id}, Filename={filename}")
+                                        print(f"✅ [FETCH] Video nuevo registrado: Message={message.id}, Chat={chat_id_str}, VideoID={existing_video_id}, Filename={filename}", flush=True)
                                     else:
-                                        print(f"⚠️ Error guardando video en DB, pero continuando...")
-                                        existing_video_id = video_id
+                                        print(f"❌ [FETCH] Error guardando video en DB, pero continuando... video_id={video_id}", flush=True)
+                                        # No asignar existing_video_id si no se guardó correctamente
+                                        existing_video_id = None
                                 else:
-                                    print(f"✅ Video existente encontrado: {existing_video_id} (Message={message.id}, Chat={chat_id_str})")
+                                    print(f"✅ [FETCH] Video existente encontrado: {existing_video_id} (Message={message.id}, Chat={chat_id_str})", flush=True)
                                 
-                                msg_info['video_url'] = f'/api/video/{existing_video_id}'
-                                msg_info['video_id'] = existing_video_id  # Agregar video_id directamente
-                                msg_info['watch_url'] = f'/watch/{existing_video_id}'
-                                print(f"✅ Video URL asignado para mensaje {message.id}: {msg_info['video_url']}, video_id: {existing_video_id}")
+                                # Solo agregar video info si tenemos un video_id válido
+                                if existing_video_id:
+                                    msg_info['video_url'] = f'/api/video/{existing_video_id}'
+                                    msg_info['video_id'] = existing_video_id  # Agregar video_id directamente
+                                    msg_info['watch_url'] = f'/watch/{existing_video_id}'
+                                    print(f"✅ [FETCH] Video URL asignado para mensaje {message.id}: video_id={existing_video_id}, video_url={msg_info['video_url']}, watch_url={msg_info['watch_url']}", flush=True)
+                                else:
+                                    print(f"⚠️ [FETCH] No se pudo obtener video_id para mensaje {message.id}, omitiendo video", flush=True)
                                 
                                 # Pre-cargar video en memoria en segundo plano (como Telegram - instantáneo)
                                 def preload_video():
@@ -2560,8 +2575,25 @@ def watch_video(video_id):
 @app.route('/api/video/<video_id>/thumbnail')
 def get_video_thumbnail(video_id):
     """Obtener la miniatura del video (como Telegram Web)"""
+    # Decodificar el video_id por si viene codificado en la URL
+    from urllib.parse import unquote
+    video_id = unquote(video_id)
+    
+    print(f"🔍 [THUMBNAIL] Buscando video_id: {video_id}", flush=True)
     video_info = get_video_from_db(video_id)
     if not video_info:
+        print(f"❌ [THUMBNAIL] Video no encontrado en DB: {video_id}", flush=True)
+        # Intentar buscar videos similares para debugging
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT video_id, chat_id, message_id FROM videos ORDER BY created_at DESC LIMIT 10")
+                    recent_videos = cursor.fetchall()
+                    print(f"📋 [THUMBNAIL] Videos recientes en DB:", flush=True)
+                    for v in recent_videos:
+                        print(f"   - video_id: {v['video_id']}, chat_id: {v['chat_id']}, message_id: {v['message_id']}", flush=True)
+        except Exception as db_debug_error:
+            print(f"⚠️ [THUMBNAIL] Error en debug DB: {db_debug_error}", flush=True)
         return jsonify({'error': 'Video no encontrado'}), 404
     
     # Primero intentar usar sesión activa (para mantener compatibilidad)
@@ -2682,10 +2714,14 @@ def get_video(video_id):
     """Obtener el video directamente desde la nube de Telegram (sin caché)"""
     import sys
     import traceback
+    from urllib.parse import unquote
     
     # Forzar flush de stdout para que los logs aparezcan inmediatamente
     sys.stdout.flush()
     sys.stderr.flush()
+    
+    # Decodificar el video_id por si viene codificado en la URL
+    video_id = unquote(video_id)
     
     # Manejar OPTIONS request (preflight CORS)
     if request.method == 'OPTIONS':

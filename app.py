@@ -900,7 +900,17 @@ def get_video_link():
         
         async def get_message_info():
             target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
-            message = await client.get_messages(target_chat, ids=message_id)
+            # Para canales, necesitamos obtener la entidad primero
+            actual_target_chat = target_chat
+            try:
+                if isinstance(target_chat, int) or (isinstance(target_chat, str) and target_chat.isdigit()):
+                    entity = await client.get_entity(int(target_chat))
+                    actual_target_chat = entity
+                    print(f"✅ [get_video_link] Entidad obtenida para chat {target_chat}: {type(entity).__name__}")
+            except Exception as entity_error:
+                print(f"⚠️ [get_video_link] No se pudo obtener entidad para {target_chat}, usando directamente: {entity_error}")
+                actual_target_chat = target_chat
+            message = await client.get_messages(actual_target_chat, ids=message_id)
             return message
         
         try:
@@ -1560,7 +1570,20 @@ def get_messages(chat_id):
         async def fetch_messages():
             messages = []
             try:
-                async for message in client.iter_messages(int(chat_id), limit=limit):
+                # Para canales, necesitamos obtener la entidad primero
+                target_chat_entity = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+                try:
+                    # Si es un número, intentar obtener como entidad (necesario para canales)
+                    if isinstance(target_chat_entity, int):
+                        entity = await client.get_entity(target_chat_entity)
+                        target_chat_entity = entity
+                        print(f"✅ [GET_MESSAGES] Entidad obtenida para chat {chat_id}: {type(entity).__name__}")
+                except Exception as entity_error:
+                    # Si falla obtener entidad, usar target_chat_entity directamente (chats normales)
+                    print(f"⚠️ [GET_MESSAGES] No se pudo obtener entidad para {chat_id}, usando directamente: {entity_error}")
+                    target_chat_entity = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
+                
+                async for message in client.iter_messages(target_chat_entity, limit=limit):
                     msg_info = {
                         'id': message.id,
                         'text': message.text or '',
@@ -2589,7 +2612,20 @@ def get_video_thumbnail(video_id):
             message_id = video_info['message_id']
             target_chat = int(chat_id) if chat_id != 'me' and str(chat_id).isdigit() else 'me'
             
-            messages = await client.get_messages(target_chat, ids=message_id)
+            # Para canales, necesitamos obtener la entidad primero
+            actual_target_chat = target_chat
+            try:
+                # Si target_chat es un número, intentar obtener como entidad (necesario para canales)
+                if isinstance(target_chat, int) or (isinstance(target_chat, str) and target_chat.isdigit()):
+                    entity = await client.get_entity(int(target_chat))
+                    actual_target_chat = entity
+                    print(f"✅ [THUMBNAIL] Entidad obtenida para chat {target_chat}: {type(entity).__name__}")
+            except Exception as entity_error:
+                # Si falla obtener entidad, usar target_chat directamente (chats normales)
+                print(f"⚠️ [THUMBNAIL] No se pudo obtener entidad para {target_chat}, usando directamente: {entity_error}")
+                actual_target_chat = target_chat
+            
+            messages = await client.get_messages(actual_target_chat, ids=message_id)
             if not messages or not messages.media:
                 return None
             
@@ -2868,19 +2904,42 @@ def get_video(video_id):
             print(f"⚠️ Error verificando autenticación: {auth_check_error}")
             # Continuar de todas formas, el error se capturará más adelante
         
+        # Para canales, necesitamos obtener la entidad primero y hacerla disponible en todo el scope
+        # Esto se hace aquí fuera de las funciones async para que esté disponible en download_initial_chunk también
+        async def get_target_chat_entity():
+            actual_target_chat = target_chat
+            try:
+                # Si target_chat es un número, intentar obtener como entidad (necesario para canales)
+                if isinstance(target_chat, int) or (isinstance(target_chat, str) and target_chat.isdigit()):
+                    entity = await client.get_entity(int(target_chat))
+                    actual_target_chat = entity
+                    print(f"✅ Entidad obtenida para chat {target_chat}: {type(entity).__name__}")
+            except Exception as entity_error:
+                # Si falla obtener entidad, usar target_chat directamente (chats normales)
+                print(f"⚠️ No se pudo obtener entidad para {target_chat}, usando directamente: {entity_error}")
+                actual_target_chat = target_chat
+            return actual_target_chat
+        
+        # Obtener la entidad del chat (importante para canales)
+        try:
+            actual_target_chat = run_async(get_target_chat_entity(), client_loop, timeout=15)
+        except Exception as e:
+            print(f"⚠️ Error obteniendo entidad del chat, usando target_chat original: {e}")
+            actual_target_chat = target_chat
+        
         # Obtener información del mensaje y el archivo
         async def get_video_info():
-            print(f"🔍 Obteniendo mensaje {message_id} del chat {target_chat}...")
+            print(f"🔍 Obteniendo mensaje {message_id} del chat {actual_target_chat}...")
             
             # Intentar obtener el mensaje específico
-            messages = await client.get_messages(target_chat, ids=message_id)
+            messages = await client.get_messages(actual_target_chat, ids=message_id)
             
             # Si no se encuentra, buscar en los mensajes recientes (como Telegram hace)
             if not messages:
                 print(f"⚠️ Mensaje {message_id} no encontrado directamente, buscando en mensajes recientes...")
                 try:
                     # Buscar en los últimos 100 mensajes del chat
-                    async for message in client.iter_messages(target_chat, limit=100):
+                    async for message in client.iter_messages(actual_target_chat, limit=100):
                         if message.id == message_id and message.media:
                             messages = message
                             print(f"✅ Mensaje {message_id} encontrado en búsqueda reciente")
@@ -2889,7 +2948,7 @@ def get_video(video_id):
                     print(f"⚠️ Error buscando mensaje: {e}")
             
             if not messages:
-                print(f"⚠️ Mensaje {message_id} no encontrado en chat {target_chat}")
+                print(f"⚠️ Mensaje {message_id} no encontrado en chat {actual_target_chat}")
                 return None, None, None
             
             if not messages.media:
@@ -3185,7 +3244,7 @@ def get_video(video_id):
                         print(f"⚠️ file_reference vacío, intentando actualizar...")
                         # Intentar obtener el mensaje de nuevo para actualizar file_reference
                         try:
-                            updated_messages = await client.get_messages(target_chat, ids=message_id)
+                            updated_messages = await client.get_messages(actual_target_chat, ids=message_id)
                             if updated_messages and hasattr(updated_messages.media, 'document'):
                                 document = updated_messages.media.document
                                 file_location = InputDocumentFileLocation(
@@ -3313,7 +3372,7 @@ def get_video(video_id):
                         for retry_attempt in range(max_retries):
                             try:
                                 print(f"🔄 Reintento {retry_attempt + 1}/{max_retries} actualizando file_reference...")
-                                updated_messages = await client.get_messages(target_chat, ids=message_id)
+                                updated_messages = await client.get_messages(actual_target_chat, ids=message_id)
                                 if updated_messages and hasattr(updated_messages.media, 'document'):
                                     document = updated_messages.media.document
                                     file_location = InputDocumentFileLocation(
